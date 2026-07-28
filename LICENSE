@@ -1,5 +1,5 @@
 This MIT license applies to the source code in this repository
-(index.html, tools/, tests/).
+(index.html, src/, tools/, tests/).
 
 The data files under data/ are derivative works of CC BY-SA licensed
 sources (HYG Database v4.1, Stellarium sky cultures) and are licensed

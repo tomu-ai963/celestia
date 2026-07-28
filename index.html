@@ -33,7 +33,7 @@ canvas#sky{position:fixed;inset:0;display:block;touch-action:none}
   text-align:right;color:rgba(223,231,242,.45);line-height:1.7}
 
 /* ---------- readout ---------- */
-#readout{position:fixed;left:0;top:96px;bottom:180px;width:236px;z-index:4;
+#readout{position:fixed;left:0;top:96px;bottom:226px;width:236px;z-index:4;
   overflow-y:auto;padding:0 0 0 20px;-webkit-overflow-scrolling:touch;
   mask-image:linear-gradient(180deg,transparent,#000 16px,#000 calc(100% - 16px),transparent);
   scrollbar-width:none}
@@ -91,6 +91,33 @@ button.go:hover{background:var(--gold);color:var(--void)}
 .tog.on i::after{left:14px;background:var(--gold)}
 .tog.on{color:var(--gold)}
 
+/* ---------- time bar ---------- */
+#timebar{display:flex;align-items:center;gap:9px;padding:0 0 15px;flex-wrap:wrap}
+.tb{background:transparent;border:1px solid rgba(217,180,95,.34);color:var(--gold);
+  font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.06em;
+  padding:6px 8px;min-width:30px;cursor:pointer;transition:.25s;border-radius:0;line-height:1}
+.tb:hover{background:rgba(217,180,95,.13)}
+.tb.on{background:var(--gold);color:var(--void);border-color:var(--gold)}
+.tb:disabled{opacity:.3;cursor:default}
+#scales{display:flex}
+#scales .tb+.tb{border-left:none}
+#tslide{flex:1 1 190px;min-width:120px;height:20px;background:transparent;
+  -webkit-appearance:none;appearance:none;cursor:pointer;padding:0;border:none}
+#tslide::-webkit-slider-runnable-track{height:1px;
+  background:linear-gradient(90deg,rgba(217,180,95,.25),rgba(217,180,95,.75))}
+#tslide::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;border-radius:50%;
+  background:var(--gold);margin-top:-5px;box-shadow:0 0 9px rgba(217,180,95,.75)}
+#tslide::-moz-range-track{height:1px;background:rgba(217,180,95,.5)}
+#tslide::-moz-range-thumb{width:11px;height:11px;border:none;border-radius:50%;
+  background:var(--gold);box-shadow:0 0 9px rgba(217,180,95,.75)}
+#tslide:focus{outline:none}
+#tnow{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.03em;
+  color:rgba(223,231,242,.72);white-space:nowrap}
+#tnow .off{color:var(--gold-dim)}
+#tnow .edge{color:var(--gold)}
+.body-row .sg .rx{font-style:normal;color:#e08a5f;margin-left:4px}
+#card .rx{color:#e08a5f}
+
 /* ---------- focus card ---------- */
 #card{position:fixed;right:20px;top:96px;width:212px;z-index:5;
   border:1px solid var(--line);background:rgba(6,9,18,.82);backdrop-filter:blur(9px);
@@ -104,7 +131,7 @@ button.go:hover{background:var(--gold);color:var(--void)}
 #card dt{color:rgba(223,231,242,.36);letter-spacing:.04em}
 #card dd{text-align:right;color:var(--ice)}
 
-#hint{position:fixed;left:50%;transform:translateX(-50%);bottom:96px;z-index:3;
+#hint{position:fixed;left:50%;transform:translateX(-50%);bottom:142px;z-index:3;
   font-size:10px;letter-spacing:.22em;color:rgba(223,231,242,.22);pointer-events:none;
   transition:opacity .6s}
 
@@ -117,7 +144,10 @@ button.go:hover{background:var(--gold);color:var(--void)}
 @keyframes starpulse{0%,100%{opacity:.8}50%{opacity:.35}}
 
 @media (max-width:720px){
-  #readout{top:auto;bottom:130px;width:100%;height:132px;padding:0 16px;
+  #timebar{gap:7px;padding-bottom:12px}
+  #tnow{order:-1;width:100%;font-size:10px}
+  #tslide{flex-basis:100%;order:1}
+  #readout{top:auto;bottom:184px;width:100%;height:118px;padding:0 16px;
     display:flex;gap:0;overflow-x:auto;overflow-y:hidden;flex-direction:column;
     flex-wrap:wrap;align-content:flex-start;
     mask-image:linear-gradient(90deg,#000 calc(100% - 30px),transparent)}
@@ -153,6 +183,8 @@ button.go:hover{background:var(--gold);color:var(--void)}
     <dt>距離</dt><dd id="cdDist">—</dd>
     <dt>サイン</dt><dd id="cdSign">—</dd>
     <dt>実星座</dt><dd id="cdConst">—</dd>
+    <dt>運動</dt><dd id="cdMot">—</dd>
+    <dt>出生時から</dt><dd id="cdNatal">—</dd>
   </dl>
 </div>
 
@@ -160,6 +192,22 @@ button.go:hover{background:var(--gold);color:var(--void)}
 <div id="starload">星野を読み込み中</div>
 
 <div id="console" class="open">
+  <div id="timebar">
+    <button class="tb" id="tPlay" title="再生 / 一時停止">▶</button>
+    <button class="tb" id="tSlower" title="速度を下げる／逆再生">◀◀</button>
+    <button class="tb" id="tFaster" title="速度を上げる">▶▶</button>
+    <button class="tb" id="tSpeed" title="現在の速度" disabled>×1</button>
+    <div id="scales">
+      <button class="tb on" data-s="hour">時</button>
+      <button class="tb" data-s="day">日</button>
+      <button class="tb" data-s="month">月</button>
+      <button class="tb" data-s="year">年</button>
+    </div>
+    <input type="range" id="tslide" min="0" max="1" step="0.0000001" value="0.5"
+           aria-label="日時">
+    <button class="tb" id="tHome" title="出生時刻に戻す">↺</button>
+    <div id="tnow">—</div>
+  </div>
   <div id="grip"><span>◇ 出生データ</span><div class="bar"></div><span id="gripState">閉じる</span></div>
   <div id="form">
     <div class="fields">
@@ -174,152 +222,31 @@ button.go:hover{background:var(--gold);color:var(--void)}
     <div class="actions">
       <button class="go" id="run">天球を生成</button>
       <div class="tog on" id="tDist"><i></i>距離を反映</div>
-      <div class="tog on" id="tHoriz"><i></i>地平線</div>
+      <div class="tog on" id="tHoriz"><i></i><span id="tHorizTx">地平線</span></div>
       <div class="tog" id="tReal"><i></i>実際の星座</div>
+      <div class="tog on" id="tTrail"><i></i>軌跡</div>
     </div>
   </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
+/* file:// では ES モジュールも fetch も読めないので、先に案内を出す（本体は起動しない） */
+if(location.protocol==='file:'){
+  var el=document.getElementById('starload');
+  el.className='err';
+  el.innerHTML='file:// では動作しません<br>ローカルサーバーで開いてください（README 参照）';
+}
+</script>
+<script type="module">
 /* ============================================================
-   1. 天文計算 — JPL近似軌道要素 + 月の短縮ELP級数
+   1. 天文計算 — src/astro.mjs（テストと共有）
    ============================================================ */
-const D2R = Math.PI/180, R2D = 180/Math.PI, AU = 149597870.7;
-const sin = a=>Math.sin(a*D2R), cos = a=>Math.cos(a*D2R);
-const norm = a => ((a%360)+360)%360;
-
-function julianDay(y,m,d,h,mi,tzHours){
-  let hh = h + mi/60 - tzHours;
-  let dd = d + hh/24;
-  if(m<=2){ y-=1; m+=12; }
-  const A = Math.floor(y/100), B = 2 - A + Math.floor(A/4);
-  return Math.floor(365.25*(y+4716)) + Math.floor(30.6001*(m+1)) + dd + B - 1524.5;
-}
-
-// a, e, I, L, longPeri, longNode  +  per-century rates
-const ELEM = {
-  mercury:[0.38709927,0.20563593,7.00497902,252.25032350,77.45779628,48.33076593,
-           0.00000037,0.00001906,-0.00594749,149472.67411175,0.16047689,-0.12534081],
-  venus:  [0.72333566,0.00677672,3.39467605,181.97909950,131.60246718,76.67984255,
-           0.00000390,-0.00004107,-0.00078890,58517.81538729,0.00268329,-0.27769418],
-  earth:  [1.00000261,0.01671123,-0.00001531,100.46457166,102.93768193,0.0,
-           0.00000562,-0.00004392,-0.01294668,35999.37244981,0.32327364,0.0],
-  mars:   [1.52371034,0.09339410,1.84969142,-4.55343205,-23.94362959,49.55953891,
-           0.00001847,0.00007882,-0.00813131,19140.30268499,0.44441088,-0.29257343],
-  jupiter:[5.20288700,0.04838624,1.30439695,34.39644051,14.72847983,100.47390909,
-           -0.00011607,-0.00013253,-0.00183714,3034.74612775,0.21252668,0.20469106],
-  saturn: [9.53667594,0.05386179,2.48599187,49.95424423,92.59887831,113.66242448,
-           -0.00125060,-0.00050991,0.00193609,1222.49362201,-0.41897216,-0.28867794],
-  uranus: [19.18916464,0.04725744,0.77263783,313.23810451,170.95427630,74.01692503,
-           -0.00196176,-0.00004397,-0.00242939,428.48202785,0.40805281,0.04240589],
-  neptune:[30.06992276,0.00859048,1.77004347,-55.12002969,44.96476227,131.78422574,
-           0.00026291,0.00005105,0.00035372,218.45945325,-0.32241464,-0.00508664],
-  pluto:  [39.48211675,0.24882730,17.14001206,238.92903833,224.06891629,110.30393684,
-           -0.00031596,0.00005170,0.00004818,145.20780515,-0.04062942,-0.01183482]
-};
-
-function helio(name,T){
-  const E = ELEM[name];
-  const a=E[0]+E[6]*T, e=E[1]+E[7]*T, I=E[2]+E[8]*T,
-        L=E[3]+E[9]*T, wb=E[4]+E[10]*T, om=E[5]+E[11]*T;
-  const w = wb - om;
-  let M = norm(L - wb); if(M>180) M-=360;
-  const es = e*R2D;
-  let Ea = M + es*sin(M);
-  for(let i=0;i<8;i++){
-    const dM = M - (Ea - es*sin(Ea));
-    Ea += dM/(1 - e*cos(Ea));
-  }
-  const xp = a*(cos(Ea)-e), yp = a*Math.sqrt(1-e*e)*sin(Ea);
-  const cw=cos(w),sw=sin(w),co=cos(om),so=sin(om),ci=cos(I),si=sin(I);
-  return {
-    x: (cw*co - sw*so*ci)*xp + (-sw*co - cw*so*ci)*yp,
-    y: (cw*so + sw*co*ci)*xp + (-sw*so + cw*co*ci)*yp,
-    z: (sw*si)*xp + (cw*si)*yp
-  };
-}
-
-function moonPos(T){
-  const Lp=norm(218.3164477+481267.88123421*T-0.0015786*T*T);
-  const D =norm(297.8501921+445267.1114034*T-0.0018819*T*T);
-  const M =norm(357.5291092+35999.0502909*T-0.0001536*T*T);
-  const Mp=norm(134.9633964+477198.8675055*T+0.0087414*T*T);
-  const F =norm(93.2720950+483202.0175233*T-0.0036539*T*T);
-  const l = Lp
-   +6.288774*sin(Mp)      +1.274027*sin(2*D-Mp)   +0.658314*sin(2*D)
-   +0.213618*sin(2*Mp)    -0.185116*sin(M)        -0.114332*sin(2*F)
-   +0.058793*sin(2*D-2*Mp)+0.057066*sin(2*D-M-Mp) +0.053322*sin(2*D+Mp)
-   +0.045758*sin(2*D-M)   -0.040923*sin(M-Mp)     -0.034720*sin(D)
-   -0.030383*sin(M+Mp)    +0.015327*sin(2*D-2*F)  -0.012528*sin(Mp+2*F)
-   +0.010980*sin(Mp-2*F)  +0.010675*sin(4*D-Mp)   +0.010034*sin(3*Mp);
-  const b =
-    5.128122*sin(F)       +0.280602*sin(Mp+F)     +0.277693*sin(Mp-F)
-   +0.173237*sin(2*D-F)   +0.055413*sin(2*D-Mp+F) +0.046271*sin(2*D-Mp-F)
-   +0.032573*sin(2*D+F)   +0.017198*sin(2*Mp+F)   +0.009266*sin(2*D+Mp-F);
-  const dist = 385000.56 - 20905.355*cos(Mp) - 3699.111*cos(2*D-Mp)
-             - 2955.968*cos(2*D) - 569.925*cos(2*Mp);
-  const lam=norm(l), bet=b, r=dist/AU;
-  return {lon:lam, lat:bet, dist:r,
-    x:r*cos(bet)*cos(lam), y:r*cos(bet)*sin(lam), z:r*sin(bet)};
-}
-
-const SIGNS=['牡羊','牡牛','双子','蟹','獅子','乙女','天秤','蠍','射手','山羊','水瓶','魚'];
-const GLYPH=['ARIES','TAURUS','GEMINI','CANCER','LEO','VIRGO','LIBRA','SCORPIO','SAGITTARIUS','CAPRICORN','AQUARIUS','PISCES'];
-// IAU公式境界（黄道上の J2000 黄経、蛇遣座を含む実サイズ）
-const IAU=[[29.1,'牡羊座'],[53.5,'牡牛座'],[90.4,'双子座'],[118.3,'蟹座'],[138.1,'獅子座'],
-  [174.0,'乙女座'],[217.8,'天秤座'],[241.1,'蠍座'],[248.0,'蛇遣座'],[266.6,'射手座'],
-  [299.7,'山羊座'],[327.6,'水瓶座'],[351.6,'魚座'],[360,'牡羊座']];
-function iauConst(lonOfDate,T){
-  const l = norm(lonOfDate - 1.39697*T); // J2000 に戻す（歳差）
-  for(const [b,n] of IAU) if(l < b) return n;
-  return '牡羊座';
-}
-
-const BODIES=[
-  {k:'sun',    n:'太陽',  lt:'SOL',     c:0xffd27a, s:2.6},
-  {k:'moon',   n:'月',    lt:'LUNA',    c:0xdfe6f0, s:2.0},
-  {k:'mercury',n:'水星',  lt:'MERCURY', c:0xb9c4cf, s:1.1},
-  {k:'venus',  n:'金星',  lt:'VENUS',   c:0xf5d7a3, s:1.4},
-  {k:'mars',   n:'火星',  lt:'MARS',    c:0xe07a5f, s:1.2},
-  {k:'jupiter',n:'木星',  lt:'JUPITER', c:0xd9b08c, s:2.0},
-  {k:'saturn', n:'土星',  lt:'SATURN',  c:0xe6cf9b, s:1.8},
-  {k:'uranus', n:'天王星',lt:'URANUS',  c:0x8fd3d8, s:1.4},
-  {k:'neptune',n:'海王星',lt:'NEPTUNE', c:0x7ea6e0, s:1.4},
-  {k:'pluto',  n:'冥王星',lt:'PLUTO',   c:0xb09a8a, s:0.9},
-  {k:'node',   n:'月の交点',lt:'N.NODE',c:0xc9a0ff, s:0.8},
-  {k:'lilith', n:'リリス',lt:'LILITH',  c:0x9a86c9, s:0.8}
-];
-
-function computeChart(jd, latDeg, lonDeg){
-  const T=(jd-2451545.0)/36525;
-  const E=helio('earth',T);
-  const out={};
-  // 太陽 = 地球ヘリオの反転
-  out.sun = geo(-E.x,-E.y,-E.z);
-  const m=moonPos(T); out.moon={lon:m.lon,lat:m.lat,dist:m.dist,x:m.x,y:m.y,z:m.z};
-  ['mercury','venus','mars','jupiter','saturn','uranus','neptune','pluto'].forEach(k=>{
-    const p=helio(k,T); out[k]=geo(p.x-E.x,p.y-E.y,p.z-E.z);
-  });
-  const nodeLon=norm(125.04452-1934.136261*T);
-  const lilLon =norm(83.3532465+4069.0137287*T);
-  out.node  =fromLon(nodeLon, 0.0026);
-  out.lilith=fromLon(lilLon , 0.0026);
-  // 地方恒星時 → 天頂ベクトル
-  const gmst=norm(280.46061837+360.98564736629*(jd-2451545.0)+0.000387933*T*T);
-  const lst=norm(gmst+lonDeg);
-  const eps=23.439291-0.0130042*T;
-  const cx=cos(latDeg)*cos(lst), cy=cos(latDeg)*sin(lst), cz=sin(latDeg);
-  out._zenith={x:cx, y:cy*cos(eps)+cz*sin(eps), z:-cy*sin(eps)+cz*cos(eps)};
-  out._T=T; out._lst=lst;
-  return out;
-
-  function geo(x,y,z){
-    const r=Math.hypot(x,y,z);
-    return {x,y,z,dist:r,lon:norm(Math.atan2(y,x)*R2D),lat:Math.asin(z/r)*R2D};
-  }
-  function fromLon(L,r){return {lon:L,lat:0,dist:r,x:r*cos(L),y:r*sin(L),z:0};}
-}
+import {
+  D2R, R2D, AU, sin, cos, norm, julianDay, jdToUTC, computeChart,
+  SIGNS, GLYPH, IAU, iauConst, BODIES, lonRates, deltaLon
+} from './src/astro.mjs';
+import { precessionRad, eclToThree, eclVecToThree } from './src/precession.mjs';
 
 /* ============================================================
    2. 3D 天球
@@ -332,7 +259,10 @@ scene.fog=null;
 const camera=new THREE.PerspectiveCamera(52,1,0.5,6000);
 let camR=430, camTheta=0.9, camPhi=1.25, tR=430, tTheta=0.9, tPhi=1.25;
 
-function ecl2three(x,y,z,s){return new THREE.Vector3(x*s, z*s, -y*s);}
+// 座標規約は src/precession.mjs が持つ（テストと共有）
+function ecl2three(x,y,z,s){const v=eclVecToThree(x,y,z,s);return new THREE.Vector3(v[0],v[1],v[2]);}
+function eclLL(lon,lat,r){const v=eclToThree(lon,lat,r);return new THREE.Vector3(v[0],v[1],v[2]);}
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* --- 星野 --- */
 function starTex(){
@@ -376,8 +306,8 @@ function buildStars(data){
   const R=1600;
   for(let i=0;i<N;i++){
     const lon=s[i*4]/1000, lat=s[i*4+1]/1000, mag=s[i*4+2]/100, ci=s[i*4+3]/100;
-    const ex=cos(lat)*cos(lon), ey=cos(lat)*sin(lon), ez=sin(lat);
-    pos[i*3]=ex*R; pos[i*3+1]=ez*R; pos[i*3+2]=-ey*R; // 黄道直交 → (x,z,-y)
+    const v=eclToThree(lon,lat,R);
+    pos[i*3]=v[0]; pos[i*3+1]=v[1]; pos[i*3+2]=v[2];
     const c=bvToRGB(ci), br=magBright(mag);
     col[i*3]=c[0]*br; col[i*3+1]=c[1]*br; col[i*3+2]=c[2]*br;
     sz[i]=magSize(mag);
@@ -402,8 +332,7 @@ function buildStars(data){
 const constGroup=new THREE.Group(); celestialGroup.add(constGroup);
 function buildConstellations(data){
   const R=1596;
-  const toVec=(lon,lat)=>new THREE.Vector3(
-    cos(lat)*cos(lon)*R, sin(lat)*R, -cos(lat)*sin(lon)*R); // 黄道直交 → (x,z,-y)
+  const toVec=(lon,lat)=>eclLL(lon,lat,R);
   const zod=[], oth=[];
   for(const con of data.constellations){
     const dst=con.zodiac?zod:oth;
@@ -554,19 +483,24 @@ function buildReal(){
 }
 buildReal();
 
-/* --- 地平線 --- */
+/* --- 地平線 ---
+   時刻とともに毎フレーム作り直すとキャンバステクスチャを量産してしまうので、
+   ジオメトリとラベルは一度だけ作り、向き（クォータニオン）だけ更新する */
 const horizGroup=new THREE.Group(); scene.add(horizGroup);
-function buildHorizon(z){
-  while(horizGroup.children.length) horizGroup.remove(horizGroup.children[0]);
-  const up=ecl2three(z.x,z.y,z.z,1).normalize();
-  const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),up);
+let horizLine=null, horizLabel=null;
+(function initHorizon(){
   const R=SKY*0.985, pts=[];
   for(let i=0;i<=180;i++){const a=i*2*D2R;pts.push(new THREE.Vector3(Math.cos(a)*R,0,Math.sin(a)*R));}
-  const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+  horizLine=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
     new THREE.LineBasicMaterial({color:0x6fa8b8,transparent:true,opacity:.45}));
-  line.quaternion.copy(q); horizGroup.add(line);
-  const zl=label('ZENITH',44,'#6fa8b8',.55);
-  zl.position.copy(up.clone().multiplyScalar(SKY*0.9)); horizGroup.add(zl);
+  horizGroup.add(horizLine);
+  horizLabel=label('ZENITH',44,'#6fa8b8',.55);
+  horizGroup.add(horizLabel);
+})();
+function updateHorizon(z){
+  const up=ecl2three(z.x,z.y,z.z,1).normalize();
+  horizLine.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),up);
+  horizLabel.position.copy(up).multiplyScalar(SKY*0.9);
 }
 
 /* --- 天体 --- */
@@ -605,20 +539,27 @@ scene.add(earth);
 /* ============================================================
    3. 状態と描画
    ============================================================ */
-let chart=null, useDist=true, focusKey=null;
-const posTarget={}, posNow={};
+let chart=null, natalChart=null, useDist=true, focusKey=null, showTrails=true;
+let latDeg=0, lonDeg=0, tzHours=9;
+const posTarget={}, posNow={}, retro={};
 
-function placeBodies(){
+/* --- 天体の配置 --- */
+function bodyVec(p){
+  const r=Math.hypot(p.x,p.y,p.z)||1;
+  const rad = useDist
+    ? Math.min(210 + Math.log10(p.dist*AU/1000)*118, SKY*0.9)   // 対数距離
+    : SKY*0.86;
+  return ecl2three(p.x/r,p.y/r,p.z/r,rad);
+}
+/* snap=true で補間を挟まず即反映（スクラブ・再生中）。
+   snap=false のときだけ lerp が効く（トグル操作時のなめらかな移り変わり用） */
+function placeBodies(snap){
   if(!chart) return;
   BODIES.forEach(b=>{
-    const p=chart[b.k];
-    const dir=new THREE.Vector3(p.x,p.y,p.z).normalize();
-    const rad = useDist
-      ? 210 + Math.log10(p.dist*AU/1000)*118   // 対数距離
-      : SKY*0.86;
-    const v=ecl2three(dir.x,dir.y,dir.z,Math.min(rad,SKY*0.9));
+    const v=bodyVec(chart[b.k]);
     posTarget[b.k]=v;
     if(!posNow[b.k]) posNow[b.k]=v.clone();
+    else if(snap) posNow[b.k].copy(v);
   });
 }
 function updateMarks(){
@@ -641,37 +582,228 @@ function updateMarks(){
   });
 }
 
-function renderReadout(){
+/* --- 出生図のマーカー（トランジットとの対比用・解釈は持たない） --- */
+const natalGroup=new THREE.Group(); natalGroup.visible=false; scene.add(natalGroup);
+const natalMarks={};
+BODIES.forEach(b=>{
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex(b.c),transparent:true,
+    opacity:.30,blending:THREE.AdditiveBlending,depthTest:false}));
+  natalGroup.add(sp); natalMarks[b.k]=sp;
+});
+function placeNatal(){
+  if(!natalChart) return;
+  BODIES.forEach(b=>{
+    const sp=natalMarks[b.k];
+    sp.position.copy(bodyVec(natalChart[b.k]));
+    const s=b.s*26*(useDist?1:0.85)*0.55;
+    sp.scale.set(s,s,1);
+  });
+}
+
+/* --- 軌跡（逆行区間を色分け） ---
+   computeChart は実測 19.5µs/回。現在時刻ぶん（3回/フレーム）は誤差だが、
+   軌跡は 110 サンプル ≒ 2.2ms かかるので毎フレームは避けて間引く */
+const TRAIL_N=110;
+const trailGroup=new THREE.Group(); scene.add(trailGroup);
+const trails={};
+BODIES.forEach(b=>{
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(TRAIL_N*2*3),3));
+  g.setAttribute('color',   new THREE.BufferAttribute(new Float32Array(TRAIL_N*2*3),3));
+  const o=new THREE.LineSegments(g,new THREE.LineBasicMaterial({vertexColors:true,
+    transparent:true,opacity:.55,blending:THREE.AdditiveBlending,depthWrite:false}));
+  o.frustumCulled=false; o.visible=false;
+  trailGroup.add(o); trails[b.k]=o;
+});
+let lastTrailJD=null, lastTrailKey='';
+function rebuildTrails(){
+  const win=SCALES[scale].trail, step=win/(TRAIL_N-1);
+  const samples=new Array(TRAIL_N);
+  for(let i=0;i<TRAIL_N;i++){
+    const jd=Math.max(JD_MIN,Math.min(JD_MAX, curJD-win+step*i));
+    samples[i]=computeChart(jd,latDeg,lonDeg);
+  }
+  BODIES.forEach(b=>{
+    const o=trails[b.k];
+    // サンプル間隔より速く動く天体は折り返しを拾えない（エイリアス）ので描かない
+    if(b.mo*step>30){ o.visible=false; return; }
+    const pos=o.geometry.attributes.position.array;
+    const col=o.geometry.attributes.color.array;
+    const base=new THREE.Color(b.c);
+    let n=0;
+    for(let i=0;i<TRAIL_N-1;i++){
+      const p0=samples[i][b.k], p1=samples[i+1][b.k];
+      const a=bodyVec(p0), c=bodyVec(p1);
+      const back=deltaLon(p0.lon,p1.lon)<0;          // 0°/360°を考慮した差分
+      const age=0.10+0.90*(i/(TRAIL_N-2));           // 古いほど暗く
+      const cr=(back?1.00:base.r*0.70)*age,
+            cg=(back?0.42:base.g*0.70)*age,
+            cb=(back?0.28:base.b*0.70)*age;
+      pos[n*3]=a.x;pos[n*3+1]=a.y;pos[n*3+2]=a.z;
+      col[n*3]=cr;col[n*3+1]=cg;col[n*3+2]=cb;n++;
+      pos[n*3]=c.x;pos[n*3+1]=c.y;pos[n*3+2]=c.z;
+      col[n*3]=cr;col[n*3+1]=cg;col[n*3+2]=cb;n++;
+    }
+    o.geometry.setDrawRange(0,n);
+    o.geometry.attributes.position.needsUpdate=true;
+    o.geometry.attributes.color.needsUpdate=true;
+    o.visible=true;
+  });
+  lastTrailJD=curJD; lastTrailKey=scale+'|'+useDist;
+}
+
+/* --- 読み出しパネル（毎フレームの DOM 更新を避け、変化した行だけ書き換える） --- */
+const rowRefs={};
+function buildReadout(){
   const el=document.getElementById('readout');
   el.innerHTML='<div class="rd-head">12天体の在処</div>';
   BODIES.forEach(b=>{
-    const p=chart[b.k];
-    const si=Math.floor(p.lon/30), deg=p.lon-si*30;
+    const hex='#'+b.c.toString(16).padStart(6,'0');
     const row=document.createElement('div');
-    row.className='body-row'+(focusKey===b.k?' on':'');
-    row.innerHTML=`<div class="dot" style="background:#${b.c.toString(16).padStart(6,'0')};color:#${b.c.toString(16).padStart(6,'0')}"></div>
-      <div class="nm">${b.n}</div>
-      <div class="sg">${SIGNS[si]}<em> ${deg.toFixed(1).padStart(4,'0')}°</em></div>`;
+    row.className='body-row';
+    row.innerHTML=`<div class="dot" style="background:${hex};color:${hex}"></div>
+      <div class="nm">${b.n}</div><div class="sg"></div>`;
     row.onclick=()=>setFocus(b.k);
     el.appendChild(row);
+    rowRefs[b.k]={row,sg:row.querySelector('.sg'),last:null};
   });
 }
-function setFocus(k){
-  focusKey = focusKey===k?null:k;
-  renderReadout();
+function updateReadout(){
+  if(!chart) return;
+  BODIES.forEach(b=>{
+    const p=chart[b.k], r=rowRefs[b.k];
+    const si=Math.floor(p.lon/30), deg=p.lon-si*30;
+    const html=`${SIGNS[si]}<em> ${deg.toFixed(1).padStart(4,'0')}°</em>`
+      +(retro[b.k]?'<i class="rx">℞</i>':'');
+    if(html!==r.last){ r.sg.innerHTML=html; r.last=html; }
+  });
+}
+function updateCard(){
   const card=document.getElementById('card');
-  if(!focusKey){card.classList.remove('show');return;}
-  const b=BODIES.find(x=>x.k===k), p=chart[k];
+  if(!focusKey||!chart){ card.classList.remove('show'); return; }
+  const b=BODIES.find(x=>x.k===focusKey), p=chart[focusKey];
   const si=Math.floor(p.lon/30);
   card.classList.add('show');
   cdName.textContent=b.n; cdLat.textContent=b.lt;
   cdLon.textContent=p.lon.toFixed(2)+'°';
   cdLat2.textContent=p.lat.toFixed(2)+'°';
-  cdDist.textContent = (k==='node'||k==='lilith') ? '—'
+  cdDist.textContent = (focusKey==='node'||focusKey==='lilith') ? '—'
     : (p.dist<0.02 ? (p.dist*AU).toFixed(0)+' km' : p.dist.toFixed(3)+' AU');
   cdSign.textContent=SIGNS[si]+'座 '+(p.lon-si*30).toFixed(1)+'°';
   cdConst.textContent=iauConst(p.lon,chart._T);
+  cdMot.innerHTML=retro[focusKey]?'<span class="rx">℞ 逆行</span>':'順行';
+  if(natalChart){
+    const d=deltaLon(natalChart[focusKey].lon,p.lon);
+    cdNatal.textContent=(d<0?'−':'+')+Math.abs(d).toFixed(2)+'°';
+  }else cdNatal.textContent='—';
 }
+function setFocus(k){
+  focusKey = focusKey===k?null:k;
+  BODIES.forEach(b=>rowRefs[b.k].row.classList.toggle('on',focusKey===b.k));
+  updateCard();
+}
+
+/* ============================================================
+   4. 時間軸
+   ============================================================ */
+// 端は 12:00 UT に置く。どのタイムゾーンで表示しても暦年が 1800–2050 に収まるようにするため
+const JD_MIN=julianDay(1800,1,1,12,0,0), JD_MAX=julianDay(2050,12,31,12,0,0);
+// half: スライダー窓の半幅（日）, rate: 再生の基準速度（日/秒）, trail: 軌跡の保持期間（日）
+const SCALES={
+  hour :{half:1,     rate:1/24,   trail:2},
+  day  :{half:15,    rate:1,      trail:30},
+  month:{half:183,   rate:30.44,  trail:400},
+  year :{half:46000, rate:365.25, trail:4000}   // half が全範囲を覆うのでスライダーは 1800–2050 全域
+};
+const SPEEDS=[-64,-16,-4,-1,1,4,16,64];
+const RATE_DT=0.5;                       // 逆行判定の中心差分の幅（日）
+let scale='hour', speedIdx=4, playing=false;
+let natalJD=0, curJD=0, winCenter=0, edgeHit=null, scrubbing=false, uiDirty=true;
+
+const elPlay=document.getElementById('tPlay'), elSpeed=document.getElementById('tSpeed'),
+      elSlide=document.getElementById('tslide'), elNow=document.getElementById('tnow');
+
+function winRange(){
+  const h=SCALES[scale].half;
+  if(2*h>=JD_MAX-JD_MIN) return [JD_MIN,JD_MAX];
+  let lo=winCenter-h, hi=winCenter+h;
+  if(lo<JD_MIN){ hi+=JD_MIN-lo; lo=JD_MIN; }
+  if(hi>JD_MAX){ lo-=hi-JD_MAX; hi=JD_MAX; }
+  return [lo,hi];
+}
+function followHorizon(){ return scale==='hour'||scale==='day'; }
+function refreshHorizon(){
+  // 地平線は地方恒星時に依存し1日で一周する。時/日スケールでは時刻に追従させ、
+  // 月/年スケールでは出生時で固定する（追従させても点滅にしか見えないため）
+  const z = followHorizon() ? chart._zenith : (natalChart?natalChart._zenith:chart._zenith);
+  updateHorizon(z);
+  document.getElementById('tHorizTx').textContent=followHorizon()?'地平線':'地平線（出生時）';
+}
+function applyTime(snap){
+  chart=computeChart(curJD,latDeg,lonDeg);
+  celestialGroup.rotation.y=precessionRad(chart._T);   // 歳差は時刻に追従する
+  const r=lonRates(curJD,RATE_DT,latDeg,lonDeg);
+  BODIES.forEach(b=>{ retro[b.k]=r[b.k]<0; });
+  placeBodies(snap);
+  refreshHorizon();
+  syncTimeUI();
+  uiDirty=true;
+}
+function setTime(jd,snap){
+  edgeHit = jd<JD_MIN?'min' : jd>JD_MAX?'max' : null;
+  if(edgeHit&&playing) setPlaying(false);
+  curJD=Math.max(JD_MIN,Math.min(JD_MAX,jd));
+  const [lo,hi]=winRange();
+  if(curJD<lo-1e-9||curJD>hi+1e-9) winCenter=curJD;
+  applyTime(snap);
+}
+function setPlaying(v){
+  playing=v;
+  elPlay.textContent=playing?'❙❙':'▶';
+  elPlay.classList.toggle('on',playing);
+}
+function fmtSpan(a){
+  if(a<1/24)  return (a*1440).toFixed(0)+'分';
+  if(a<2)     return (a*24).toFixed(1)+'時間';
+  if(a<400)   return a.toFixed(1)+'日';
+  return (a/365.25).toFixed(2)+'年';
+}
+function syncTimeUI(){
+  const [lo,hi]=winRange();
+  if(!scrubbing) elSlide.value=String(hi>lo?(curJD-lo)/(hi-lo):0.5);
+  const u=jdToUTC(curJD+tzHours/24), p=n=>String(n).padStart(2,'0');
+  const off=curJD-natalJD;
+  let html=`${u.y}.${p(u.m)}.${p(u.d)} ${p(u.h)}:${p(u.mi)}`;
+  html += Math.abs(off)<1e-6 ? ' <span class="off">出生時</span>'
+        : ` <span class="off">${off<0?'−':'+'}${fmtSpan(Math.abs(off))}</span>`;
+  if(edgeHit) html += ` <span class="edge">▍${edgeHit==='min'?'下限 1800':'上限 2050'}</span>`;
+  elNow.innerHTML=html;
+  elSpeed.textContent=(SPEEDS[speedIdx]<0?'◀×':'×')+Math.abs(SPEEDS[speedIdx]);
+}
+elPlay.onclick=()=>setPlaying(!playing);
+document.getElementById('tFaster').onclick=()=>{
+  speedIdx=Math.min(SPEEDS.length-1,speedIdx+1); syncTimeUI(); };
+document.getElementById('tSlower').onclick=()=>{
+  speedIdx=Math.max(0,speedIdx-1); syncTimeUI(); };
+document.getElementById('tHome').onclick=()=>{
+  setPlaying(false); winCenter=natalJD; setTime(natalJD,true); };
+document.querySelectorAll('#scales .tb').forEach(btn=>{
+  btn.onclick=()=>{
+    document.querySelectorAll('#scales .tb').forEach(x=>x.classList.remove('on'));
+    btn.classList.add('on');
+    scale=btn.dataset.s;
+    winCenter=curJD;                 // 窓を現在時刻に寄せ直す
+    lastTrailJD=null;
+    applyTime(true);
+  };
+});
+elSlide.addEventListener('input',()=>{
+  scrubbing=true;
+  const [lo,hi]=winRange();
+  setTime(lo+(+elSlide.value)*(hi-lo),true);
+});
+['change','pointerup','pointercancel','touchend','blur'].forEach(ev=>
+  elSlide.addEventListener(ev,()=>{ scrubbing=false; }));
 
 function run(){
   const dv=document.getElementById('d').value, tv=document.getElementById('t').value||'12:00';
@@ -680,14 +812,18 @@ function run(){
   const la=parseFloat(document.getElementById('lat').value)||0;
   const lo=parseFloat(document.getElementById('lon').value)||0;
   const tz=parseFloat(document.getElementById('place').selectedOptions[0].dataset.tz||0);
-  const jd=julianDay(Y,M,D,h,mi,tz);
-  chart=computeChart(jd,la,lo);
-  placeBodies(); renderReadout(); buildHorizon(chart._zenith);
-  // 歳差: J2000 の天球固定レイヤーを当日の黄経へ回す（符号は precession.test.mjs で確定）
-  celestialGroup.rotation.y = 1.39697*chart._T*D2R;
+  latDeg=la; lonDeg=lo; tzHours=tz;
+  natalJD=Math.max(JD_MIN,Math.min(JD_MAX,julianDay(Y,M,D,h,mi,tz)));
+  natalChart=computeChart(natalJD,latDeg,lonDeg);
+  winCenter=natalJD; edgeHit=null;
+  setPlaying(false);
+  setTime(natalJD,true);
+  placeNatal();
+  lastTrailJD=null;
   focusKey=null; document.getElementById('card').classList.remove('show');
+  BODIES.forEach(b=>rowRefs[b.k].row.classList.remove('on'));
   document.getElementById('stamp').innerHTML =
-    `${dv.replace(/-/g,'.')} ${tv}<br>${la.toFixed(2)}° ${lo.toFixed(2)}°<br>JD ${jd.toFixed(4)}`;
+    `${dv.replace(/-/g,'.')} ${tv}<br>${la.toFixed(2)}° ${lo.toFixed(2)}°<br>JD ${natalJD.toFixed(4)}`;
   tR=useDist?430:300;
 }
 
@@ -726,8 +862,9 @@ function toggle(id,fn){
   const el=document.getElementById(id);
   el.onclick=()=>{el.classList.toggle('on');fn(el.classList.contains('on'));};
 }
-toggle('tDist',v=>{useDist=v;placeBodies();tR=v?430:300;});
+toggle('tDist',v=>{useDist=v;placeBodies(false);placeNatal();lastTrailJD=null;tR=v?430:300;});
 toggle('tHoriz',v=>{horizGroup.visible=v;});
+toggle('tTrail',v=>{showTrails=v;});
 zodiacGroup.children.forEach(c=>{if(c.material) c.userData.base=c.material.opacity;});
 toggle('tReal',v=>{realGroup.visible=v;zodiacGroup.children.forEach(c=>{
   if(c.material) c.material.opacity = c.userData.base*(v?0.4:1);});});
@@ -767,12 +904,31 @@ function resize(){
 }
 addEventListener('resize',resize); resize();
 
-let t0=performance.now();
+let t0=performance.now(), uiAcc=0;
 (function loop(){
   requestAnimationFrame(loop);
   const now=performance.now(), dt=(now-t0)/1000; t0=now;
+
+  // 再生（1フレームあたり computeChart 3回 ≒ 59µs）
+  if(playing) setTime(curJD + SCALES[scale].rate*SPEEDS[speedIdx]*dt, true);
+
+  // 軌跡: 毎フレームだと 2.2ms 取られるので、窓の 1/220 動いたときだけ作り直す。
+  // prefers-reduced-motion では再生中は動かさず、止まってから描く
+  const trailPaused = REDUCED && playing;
+  trailGroup.visible = showTrails && !trailPaused;
+  if(showTrails && chart && !trailPaused){
+    const key=scale+'|'+useDist;
+    if(key!==lastTrailKey || lastTrailJD===null ||
+       Math.abs(curJD-lastTrailJD)>SCALES[scale].trail/220) rebuildTrails();
+  }
+  natalGroup.visible = !!natalChart && Math.abs(curJD-natalJD)>0.02;
+
+  // 読み出しパネルの DOM 更新は 8Hz に間引く
+  uiAcc+=dt;
+  if(uiDirty && uiAcc>0.12){ uiAcc=0; uiDirty=false; updateReadout(); updateCard(); }
+
   camR+=(tR-camR)*0.07; camTheta+=(tTheta-camTheta)*0.1; camPhi+=(tPhi-camPhi)*0.1;
-  if(!drag) tTheta+=dt*0.012;
+  if(!drag && !REDUCED) tTheta+=dt*0.012;
   camera.position.set(
     camR*Math.sin(camPhi)*Math.cos(camTheta),
     camR*Math.cos(camPhi),
@@ -782,6 +938,7 @@ let t0=performance.now();
   renderer.render(scene,camera);
 })();
 
+buildReadout();
 run();
 setTimeout(()=>{
   document.getElementById('console').classList.remove('open');
