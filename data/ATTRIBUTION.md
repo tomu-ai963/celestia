@@ -54,9 +54,43 @@ CC BY-SA を継承する。**
 
 ---
 
+## tests/fixtures/horizons/*.csv
+
+- **出典**: NASA/JPL Horizons システム（https://ssd.jpl.nasa.gov/horizons/）
+- **取得元**: Horizons API（https://ssd-api.jpl.nasa.gov/doc/horizons.html）。
+  再取得は `node tools/fetch-horizons.mjs`
+- **ライセンス**: 米国政府（NASA/JPL-Caltech）の作成物でパブリックドメイン。
+  JPL の利用条件は https://www.jpl.nasa.gov/jpl-image-use-policy/ に準ずる
+- **用途**: テスト時に API を叩かずに済ませるための参照値。加工は
+  「必要な列だけを CSV に落とす」のみで、数値そのものは変更していない
+
+---
+
+## 実行時に問い合わせる外部サービス
+
+`data/` には含まれないが、アプリが実行時に利用するもの。
+
+### Open-Meteo Geocoding API（出生地の検索）
+
+- **エンドポイント**: `https://geocoding-api.open-meteo.com/v1/search`（APIキー不要）
+- **原データ**: GeoNames — [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+- **利用条件**: [Open-Meteo Terms](https://open-meteo.com/en/terms) — 非商用に限り無料。
+  10,000 req/日・5,000 req/時・600 req/分
+- **アプリ側の扱い**: 検索ボタンを押したときだけ 1 回問い合わせる（入力に合わせた
+  逐次補完はしない）。応答は緯度経度とタイムゾーンを入力欄へ埋めるだけで保存しない。
+  不通時はプリセットと直接入力へ倒し、オフラインでも全機能が使える
+
+### タイムゾーンデータ
+
+- ブラウザ組み込みの `Intl.DateTimeFormat` 経由で処理系同梱の
+  [IANA Time Zone Database](https://www.iana.org/time-zones) を参照する
+  （Public Domain）。アプリはデータを同梱しない
+
+---
+
 ## 該当しないもの
 
 - `index.html` 内の天の川レイヤーは銀河座標系の向きのみ正確な**手続き生成の装飾**であり、
   外部データの派生物ではない（コードとして MIT）
-- 惑星・月の位置計算（JPL 近似軌道要素・短縮 ELP 級数）は係数を論文・公開資料から
+- 惑星・月の位置計算（JPL 近似軌道要素・Meeus の月の級数）は係数を論文・公開資料から
   実装したコードであり、`data/` のデータライセンスとは無関係

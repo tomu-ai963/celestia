@@ -61,7 +61,7 @@ canvas#sky{position:fixed;inset:0;display:block;touch-action:none}
 #grip .bar{flex:1;height:1px;background:linear-gradient(90deg,transparent,var(--line),transparent)}
 #grip span{font-size:10px;letter-spacing:.26em;color:var(--gold);white-space:nowrap}
 #form{max-height:0;overflow:hidden;transition:max-height .5s cubic-bezier(.2,.8,.2,1)}
-#console.open #form{max-height:420px}
+#console.open #form{max-height:min(560px,58vh);overflow-y:auto}
 .fields{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px;padding:20px 0 16px;max-width:520px}
 .f{display:flex;flex-direction:column;gap:5px}
 .f.wide{grid-column:1/-1}
@@ -76,6 +76,16 @@ select{background-image:linear-gradient(45deg,transparent 50%,var(--gold-dim) 50
 select option{background:var(--deep);color:var(--ice)}
 input:focus,select:focus{outline:none;border-bottom-color:var(--gold)}
 input[type=date],input[type=time]{color-scheme:dark}
+/* 出生地の検索行とタイムゾーン */
+.searchrow{display:flex;gap:8px;align-items:flex-end}
+.searchrow input{flex:1}
+button.go.sm{padding:5px 12px;font-size:10px;white-space:nowrap}
+#qmsg,#tzinfo{font-size:10px;letter-spacing:.06em;color:rgba(223,231,242,.42);
+  min-height:13px;padding-top:4px;line-height:1.5}
+#qmsg.err{color:#e08a5f}
+#qmsg.ok{color:var(--gold-dim)}
+#tzinfo b{font-weight:400;color:var(--gold-dim);font-family:'JetBrains Mono',monospace}
+#tzinfo .warn{color:#e08a5f}
 .actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding-bottom:4px}
 button.go{background:transparent;border:1px solid var(--gold);color:var(--gold);
   font-family:'Shippori Mincho',serif;font-size:12px;letter-spacing:.24em;
@@ -116,7 +126,10 @@ button.go:hover{background:var(--gold);color:var(--void)}
 #tnow .off{color:var(--gold-dim)}
 #tnow .edge{color:var(--gold)}
 .body-row .sg .rx{font-style:normal;color:#e08a5f;margin-left:4px}
+/* 軌跡がサンプル間隔より速い天体（＝軌跡を描いていない）の印 */
+.body-row .sg .nt{font-style:normal;color:rgba(223,231,242,.3);margin-left:4px}
 #card .rx{color:#e08a5f}
+#card .muted{color:rgba(223,231,242,.45)}
 
 /* ---------- focus card ---------- */
 #card{position:fixed;right:20px;top:96px;width:212px;z-index:5;
@@ -213,11 +226,23 @@ button.go:hover{background:var(--gold);color:var(--void)}
     <div class="fields">
       <div class="f"><label>生年月日</label><input type="date" id="d" value="1990-07-14"></div>
       <div class="f"><label>出生時刻（現地）</label><input type="time" id="t" value="09:30"></div>
-      <div class="f wide"><label>出生地</label>
+      <div class="f wide"><label>出生地を検索</label>
+        <div class="searchrow">
+          <input type="search" id="q" placeholder="金沢 / Reykjavik / Sydney …"
+                 autocomplete="off" enterkeyhint="search">
+          <button class="go sm" id="qgo">検索</button>
+        </div>
+        <div id="qmsg"></div>
+      </div>
+      <div class="f wide"><label>プリセット / 検索結果</label>
         <select id="place"></select>
       </div>
-      <div class="f"><label>緯度</label><input type="number" id="lat" step="0.01" value="35.68"></div>
-      <div class="f"><label>経度</label><input type="number" id="lon" step="0.01" value="139.77"></div>
+      <div class="f"><label>緯度</label><input type="number" id="lat" step="0.0001" value="35.68"></div>
+      <div class="f"><label>経度</label><input type="number" id="lon" step="0.0001" value="139.77"></div>
+      <div class="f wide"><label>タイムゾーン</label>
+        <select id="tz"></select>
+        <div id="tzinfo"></div>
+      </div>
     </div>
     <div class="actions">
       <button class="go" id="run">天球を生成</button>
@@ -243,10 +268,12 @@ if(location.protocol==='file:'){
    1. 天文計算 — src/astro.mjs（テストと共有）
    ============================================================ */
 import {
-  D2R, R2D, AU, sin, cos, norm, julianDay, jdToUTC, computeChart,
+  D2R, R2D, AU, sin, cos, norm, julianDay, computeChart,
   SIGNS, GLYPH, IAU, iauConst, BODIES, lonRates, deltaLon
 } from './src/astro.mjs';
-import { precessionRad, eclToThree, eclVecToThree } from './src/precession.mjs';
+import { precessionMatrixThree, eclToThree, eclVecToThree } from './src/precession.mjs';
+import { zonedToJd, jdToZoned, zoneList, isValidZone, formatOffset } from './src/timezone.mjs';
+import { searchPlace, reasonText } from './src/geocode.mjs';
 
 /* ============================================================
    2. 3D 天球
@@ -296,9 +323,13 @@ function magSize(mag){ return Math.min(20, Math.max(2.1, 12.5*Math.pow(10,-mag/7
 function magBright(mag){ return Math.min(1.05, 0.50+0.62*Math.pow(10,-mag/5.5)); }
 
 /* 天球に固定されたもの（星野・星座線・IAU境界・天の川）の親グループ。
-   歳差はチャート生成時にこのグループごと黄道極(+Y)まわりへ回して適用する。
-   回転の符号は tools/precession.mjs + tests/precession.test.mjs で確定済み */
+   中身は J2000 で作り、歳差はチャート生成時にこのグループの行列で適用する。
+   行列は惑星側（astro.mjs の precessVec）とまったく同じ src/precession.mjs 由来で、
+   符号と量は tests/precession.test.mjs が 3D 座標から逆算して押さえている。
+   position/rotation から毎フレーム作り直されないよう matrixAutoUpdate を切る */
 const celestialGroup=new THREE.Group(); scene.add(celestialGroup);
+celestialGroup.matrixAutoUpdate=false;
+function applyPrecession(T){ celestialGroup.matrix.set(...precessionMatrixThree(T)); }
 const starGroup=new THREE.Group(); celestialGroup.add(starGroup);
 function buildStars(data){
   const N=data.count, s=data.stars;
@@ -540,7 +571,7 @@ scene.add(earth);
    3. 状態と描画
    ============================================================ */
 let chart=null, natalChart=null, useDist=true, focusKey=null, showTrails=true;
-let latDeg=0, lonDeg=0, tzHours=9;
+let latDeg=0, lonDeg=0, tzId='Asia/Tokyo';   // 固定オフセットではなく IANA ゾーンID
 const posTarget={}, posNow={}, retro={};
 
 /* --- 天体の配置 --- */
@@ -583,6 +614,9 @@ function updateMarks(){
 }
 
 /* --- 出生図のマーカー（トランジットとの対比用・解釈は持たない） --- */
+/* **celestialGroup ではなく scene に足すこと。** celestialGroup の下に入れると
+   歳差でマーカー自身が回ってしまい、カードに出す「出生時からの黄経差」が
+   歳差ぶん狂う。出生図の位置はその日の黄道座標に固定しておく */
 const natalGroup=new THREE.Group(); natalGroup.visible=false; scene.add(natalGroup);
 const natalMarks={};
 BODIES.forEach(b=>{
@@ -616,6 +650,9 @@ BODIES.forEach(b=>{
   trailGroup.add(o); trails[b.k]=o;
 });
 let lastTrailJD=null, lastTrailKey='';
+/* サンプル間隔より速く動く天体は折り返しを拾えない（エイリアス）ので軌跡を描かない。
+   スケールだけで決まり時刻には依らないので、読み出しパネルもこの判定を共有する */
+function trailAliased(b){ return b.mo*(SCALES[scale].trail/(TRAIL_N-1))>30; }
 function rebuildTrails(){
   const win=SCALES[scale].trail, step=win/(TRAIL_N-1);
   const samples=new Array(TRAIL_N);
@@ -625,8 +662,7 @@ function rebuildTrails(){
   }
   BODIES.forEach(b=>{
     const o=trails[b.k];
-    // サンプル間隔より速く動く天体は折り返しを拾えない（エイリアス）ので描かない
-    if(b.mo*step>30){ o.visible=false; return; }
+    if(trailAliased(b)){ o.visible=false; return; }
     const pos=o.geometry.attributes.position.array;
     const col=o.geometry.attributes.color.array;
     const base=new THREE.Color(b.c);
@@ -674,7 +710,10 @@ function updateReadout(){
     const p=chart[b.k], r=rowRefs[b.k];
     const si=Math.floor(p.lon/30), deg=p.lon-si*30;
     const html=`${SIGNS[si]}<em> ${deg.toFixed(1).padStart(4,'0')}°</em>`
-      +(retro[b.k]?'<i class="rx">℞</i>':'');
+      +(retro[b.k]?'<i class="rx">℞</i>':'')
+      // 軌跡を描いていない天体を明示する（表示が抜けているのか、そもそも
+      // 描けないのかが見て分からないため）
+      +(showTrails&&trailAliased(b)?'<i class="nt" title="このスケールでは軌跡を描けない">⌁</i>':'');
     if(html!==r.last){ r.sg.innerHTML=html; r.last=html; }
   });
 }
@@ -691,7 +730,9 @@ function updateCard(){
     : (p.dist<0.02 ? (p.dist*AU).toFixed(0)+' km' : p.dist.toFixed(3)+' AU');
   cdSign.textContent=SIGNS[si]+'座 '+(p.lon-si*30).toFixed(1)+'°';
   cdConst.textContent=iauConst(p.lon,chart._T);
-  cdMot.innerHTML=retro[focusKey]?'<span class="rx">℞ 逆行</span>':'順行';
+  cdMot.innerHTML=(retro[focusKey]?'<span class="rx">℞ 逆行</span>':'順行')
+    +(showTrails&&trailAliased(b)
+       ?' <span class="muted">⌁ 軌跡なし（このスケールでは速すぎる）</span>':'');
   if(natalChart){
     const d=deltaLon(natalChart[focusKey].lon,p.lon);
     cdNatal.textContent=(d<0?'−':'+')+Math.abs(d).toFixed(2)+'°';
@@ -716,7 +757,11 @@ const SCALES={
   year :{half:46000, rate:365.25, trail:4000}   // half が全範囲を覆うのでスライダーは 1800–2050 全域
 };
 const SPEEDS=[-64,-16,-4,-1,1,4,16,64];
-const RATE_DT=0.5;                       // 逆行判定の中心差分の幅（日）
+/* 逆行判定の中心差分の幅（日）。
+   **再生速度やフレーム間隔には絶対に連動させないこと。** 連動させると一時停止中に
+   h→0 となり、0/0 で判定が壊れる（速度を上げると留の位置が動く、という形でも出る）。
+   逆行かどうかは「その瞬間の天体の性質」であって、こちらの再生の都合とは無関係 */
+const RATE_DT=0.5;
 let scale='hour', speedIdx=4, playing=false;
 let natalJD=0, curJD=0, winCenter=0, edgeHit=null, scrubbing=false, uiDirty=true;
 
@@ -741,7 +786,7 @@ function refreshHorizon(){
 }
 function applyTime(snap){
   chart=computeChart(curJD,latDeg,lonDeg);
-  celestialGroup.rotation.y=precessionRad(chart._T);   // 歳差は時刻に追従する
+  applyPrecession(chart._T);                           // 歳差は時刻に追従する
   const r=lonRates(curJD,RATE_DT,latDeg,lonDeg);
   BODIES.forEach(b=>{ retro[b.k]=r[b.k]<0; });
   placeBodies(snap);
@@ -771,7 +816,9 @@ function fmtSpan(a){
 function syncTimeUI(){
   const [lo,hi]=winRange();
   if(!scrubbing) elSlide.value=String(hi>lo?(curJD-lo)/(hi-lo):0.5);
-  const u=jdToUTC(curJD+tzHours/24), p=n=>String(n).padStart(2,'0');
+  // 表示は現地時刻。オフセットは**その時点で**引き直す（時間軸が夏時間の境界を
+  // またぐと表示が1時間跳ぶ。固定オフセットだったP2では起きなかった正しい挙動）
+  const u=jdToZoned(tzId,curJD), p=n=>String(n).padStart(2,'0');
   const off=curJD-natalJD;
   let html=`${u.y}.${p(u.m)}.${p(u.d)} ${p(u.h)}:${p(u.mi)}`;
   html += Math.abs(off)<1e-6 ? ' <span class="off">出生時</span>'
@@ -805,15 +852,22 @@ elSlide.addEventListener('input',()=>{
 ['change','pointerup','pointercancel','touchend','blur'].forEach(ev=>
   elSlide.addEventListener(ev,()=>{ scrubbing=false; }));
 
+const elLat=document.getElementById('lat'), elLon=document.getElementById('lon'),
+      elTz=document.getElementById('tz'), elPlace=document.getElementById('place'),
+      elQ=document.getElementById('q'), elQMsg=document.getElementById('qmsg'),
+      elTzInfo=document.getElementById('tzinfo');
+
 function run(){
   const dv=document.getElementById('d').value, tv=document.getElementById('t').value||'12:00';
   if(!dv) return;
   const [Y,M,D]=dv.split('-').map(Number), [h,mi]=tv.split(':').map(Number);
-  const la=parseFloat(document.getElementById('lat').value)||0;
-  const lo=parseFloat(document.getElementById('lon').value)||0;
-  const tz=parseFloat(document.getElementById('place').selectedOptions[0].dataset.tz||0);
-  latDeg=la; lonDeg=lo; tzHours=tz;
-  natalJD=Math.max(JD_MIN,Math.min(JD_MAX,julianDay(Y,M,D,h,mi,tz)));
+  const la=parseFloat(elLat.value)||0;
+  const lo=parseFloat(elLon.value)||0;
+  const tz=isValidZone(elTz.value)?elTz.value:'UTC';
+  latDeg=la; lonDeg=lo; tzId=tz;
+  // 固定オフセットではなく IANA ゾーンで換算するので、夏時間期間の出生時刻も合う
+  const z=zonedToJd(tz,Y,M,D,h,mi);
+  natalJD=Math.max(JD_MIN,Math.min(JD_MAX,z.jd));
   natalChart=computeChart(natalJD,latDeg,lonDeg);
   winCenter=natalJD; edgeHit=null;
   setPlaying(false);
@@ -822,34 +876,116 @@ function run(){
   lastTrailJD=null;
   focusKey=null; document.getElementById('card').classList.remove('show');
   BODIES.forEach(b=>rowRefs[b.k].row.classList.remove('on'));
+  showTzInfo(z);
   document.getElementById('stamp').innerHTML =
-    `${dv.replace(/-/g,'.')} ${tv}<br>${la.toFixed(2)}° ${lo.toFixed(2)}°<br>JD ${natalJD.toFixed(4)}`;
+    `${dv.replace(/-/g,'.')} ${tv} <span class="off">${formatOffset(z.offsetSeconds)}</span>`
+    +`<br>${la.toFixed(2)}° ${lo.toFixed(2)}°<br>JD ${natalJD.toFixed(4)}`;
   tR=useDist?430:300;
 }
 
-/* --- 場所プリセット --- */
+/** 出生時刻に効いた実際のオフセットと、夏時間の境界にかかった場合の注意を出す */
+function showTzInfo(z){
+  let note='';
+  if(z.status==='nonexistent'){
+    // 繰り上げで飛ばされた時刻。切り替え前のオフセットを当てた結果、
+    // 実際には別の壁時計時刻になっている。その着地点を出さないと何が起きたか伝わらない
+    const a=jdToZoned(tzId,z.jd), p=n=>String(n).padStart(2,'0');
+    note='<span class="warn">この時刻は夏時間の繰り上げで存在しません。'
+      +`${p(a.h)}:${p(a.mi)} として解釈しています</span>`;
+  }else if(z.status==='ambiguous'){
+    note='<span class="warn">この時刻は夏時間の終了で2回あります。'
+      +'先に来るほう（夏時間側）で解釈しています</span>';
+  }
+  elTzInfo.innerHTML=`出生時のオフセット <b>${formatOffset(z.offsetSeconds)}</b>`
+    +(note?' · '+note:'');
+}
+
+/* --- 場所プリセット（オフラインでも使える経路） ---
+   タイムゾーンは固定オフセットではなく IANA のゾーンIDで持つ */
 const PLACES=[
-  ['東京',35.68,139.77,9],['大阪',34.69,135.50,9],['札幌',43.06,141.35,9],
-  ['那覇',26.21,127.68,9],['金沢',36.56,136.66,9],['仙台',38.27,140.87,9],
-  ['福岡',33.59,130.40,9],['ソウル',37.57,126.98,9],['シンガポール',1.35,103.82,8],
-  ['シドニー',-33.87,151.21,10],['ロンドン',51.51,-0.13,0],['パリ',48.86,2.35,1],
-  ['ニューヨーク',40.71,-74.01,-5],['ロサンゼルス',34.05,-118.24,-8],
-  ['レイキャビク',64.15,-21.94,0],['カスタム入力',0,0,0]
+  ['東京',35.68,139.77,'Asia/Tokyo'],       ['大阪',34.69,135.50,'Asia/Tokyo'],
+  ['札幌',43.06,141.35,'Asia/Tokyo'],       ['那覇',26.21,127.68,'Asia/Tokyo'],
+  ['金沢',36.56,136.66,'Asia/Tokyo'],       ['仙台',38.27,140.87,'Asia/Tokyo'],
+  ['福岡',33.59,130.40,'Asia/Tokyo'],       ['ソウル',37.57,126.98,'Asia/Seoul'],
+  ['シンガポール',1.35,103.82,'Asia/Singapore'],
+  ['シドニー',-33.87,151.21,'Australia/Sydney'],
+  ['ロンドン',51.51,-0.13,'Europe/London'], ['パリ',48.86,2.35,'Europe/Paris'],
+  ['ニューヨーク',40.71,-74.01,'America/New_York'],
+  ['ロサンゼルス',34.05,-118.24,'America/Los_Angeles'],
+  ['レイキャビク',64.15,-21.94,'Atlantic/Reykjavik'],
+  ['カスタム入力',null,null,null]
 ];
+
+/* ゾーン選択は Intl 由来の一覧から作る（外部ライブラリなし・追加バイトなし）。
+   Intl.supportedValuesOf が無い環境では timezone.mjs 側の控えに落ちる */
 (function(){
-  const s=document.getElementById('place');
-  PLACES.forEach((p,i)=>{
-    const o=document.createElement('option');
-    o.textContent=p[0]; o.value=i; o.dataset.tz=p[3]; s.appendChild(o);
-  });
-  s.onchange=()=>{
-    const p=PLACES[+s.value];
-    if(p[0]!=='カスタム入力'){
-      document.getElementById('lat').value=p[1];
-      document.getElementById('lon').value=p[2];
-    }
-  };
+  for(const z of zoneList()){
+    const o=document.createElement('option'); o.value=z; o.textContent=z; elTz.appendChild(o);
+  }
+  elTz.value='Asia/Tokyo';
+  elTz.onchange=()=>{ if(natalJD) run(); };
 })();
+
+/* プリセットと検索結果を同じ select に載せる。検索結果は先頭のグループへ積む */
+let searchGroup=null;
+function fillPlaces(){
+  elPlace.innerHTML='';
+  const g=document.createElement('optgroup'); g.label='プリセット';
+  PLACES.forEach((p,i)=>{
+    const o=document.createElement('option'); o.value='p'+i; o.textContent=p[0]; g.appendChild(o);
+  });
+  elPlace.appendChild(g);
+}
+fillPlaces();
+elPlace.onchange=()=>{
+  const v=elPlace.value;
+  if(v.startsWith('p')){
+    const p=PLACES[+v.slice(1)];
+    if(p[1]===null) return;                       // カスタム入力は緯度経度を触らない
+    elLat.value=p[1]; elLon.value=p[2]; elTz.value=p[3];
+  }else{
+    const r=lastResults[+v.slice(1)]; if(!r) return;
+    elLat.value=r.lat.toFixed(4); elLon.value=r.lon.toFixed(4);
+    if(r.timezone&&isValidZone(r.timezone)) elTz.value=r.timezone;
+  }
+  if(natalJD) run();
+};
+
+/* --- 出生地の検索（Open-Meteo / キー不要）---
+   結果は緯度経度とゾーンを「埋めるだけ」で、以後は手で微調整できる。
+   失敗してもプリセットと直接入力はそのまま使えるので、オフラインでも動く */
+let lastResults=[], searching=false;
+async function doSearch(){
+  if(searching) return;
+  const q=elQ.value.trim();
+  if(!q){ elQMsg.className='err'; elQMsg.textContent='地名を入力してください'; return; }
+  searching=true;
+  elQMsg.className=''; elQMsg.textContent='検索中…';
+  const r=await searchPlace(q);
+  searching=false;
+  if(!r.ok){
+    elQMsg.className='err'; elQMsg.textContent=reasonText(r.reason);
+    return;
+  }
+  lastResults=r.results;
+  fillPlaces();
+  if(searchGroup) searchGroup.remove();
+  searchGroup=document.createElement('optgroup');
+  searchGroup.label=`検索結果「${q}」`;
+  lastResults.forEach((x,i)=>{
+    const o=document.createElement('option');
+    o.value='s'+i;
+    o.textContent=`${x.label}${x.timezone?'　'+x.timezone:''}`;
+    searchGroup.appendChild(o);
+  });
+  elPlace.insertBefore(searchGroup,elPlace.firstChild);
+  elPlace.value='s0';
+  elQMsg.className='ok';
+  elQMsg.textContent=`${lastResults.length}件 · 緯度経度とタイムゾーンを反映しました（手で微調整できます）`;
+  elPlace.onchange();
+}
+document.getElementById('qgo').onclick=doSearch;
+elQ.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); doSearch(); } });
 
 /* --- UI --- */
 document.getElementById('run').onclick=run;
@@ -864,7 +1000,7 @@ function toggle(id,fn){
 }
 toggle('tDist',v=>{useDist=v;placeBodies(false);placeNatal();lastTrailJD=null;tR=v?430:300;});
 toggle('tHoriz',v=>{horizGroup.visible=v;});
-toggle('tTrail',v=>{showTrails=v;});
+toggle('tTrail',v=>{showTrails=v;uiDirty=true;});   // ⌁ 印の出し入れを読み出しに反映
 zodiacGroup.children.forEach(c=>{if(c.material) c.userData.base=c.material.opacity;});
 toggle('tReal',v=>{realGroup.visible=v;zodiacGroup.children.forEach(c=>{
   if(c.material) c.material.opacity = c.userData.base*(v?0.4:1);});});

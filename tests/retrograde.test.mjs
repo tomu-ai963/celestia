@@ -116,6 +116,32 @@ test('1800–2050 を通しで計算しても破綻しない', () => {
   }
 });
 
+test('逆行判定が中心差分の刻み幅に依存しない（刻みを再生速度に連動させないための保険）', () => {
+  // index.html の RATE_DT は固定値でなければならない。再生速度やフレーム間隔に
+  // 連動させると一時停止中に h→0 となって 0/0 で壊れる。ここでは「妥当な刻みなら
+  // どれでも同じ判定になる」ことを押さえ、刻みが判定の一部ではないことを示す。
+  const dts = [0.1, 0.25, 0.5, 1.0];
+  for (let jd = julianDay(2024, 1, 1, 0, 0, 0); jd < julianDay(2026, 1, 1, 0, 0, 0); jd += 6.3) {
+    const ref = lonRates(jd, 0.5);
+    for (const dt of dts) {
+      const r = lonRates(jd, dt);
+      for (const b of BODIES) {
+        // 留の直近（速度がほぼ0）は刻みで符号が変わりうるので、そこは除く
+        if (Math.abs(ref[b.k]) < 0.01) continue;
+        assert.equal(r[b.k] < 0, ref[b.k] < 0,
+          `${b.k} dt=${dt} で判定が変わる（${r[b.k].toFixed(5)} vs ${ref[b.k].toFixed(5)}）@ ${fmt(jd)}`);
+      }
+    }
+  }
+});
+
+test('刻み幅 0 では速度が定義できない（連動させた場合に起きること）', () => {
+  const jd = julianDay(2025, 6, 1, 0, 0, 0);
+  const r = lonRates(jd, 0);
+  assert.ok(Object.values(r).every(v => !Number.isFinite(v)),
+    '刻み0で有限値が返っている — 0/0 が隠れている可能性');
+});
+
 test('ユリウス日の相互変換が往復する', () => {
   const cases = [[1800,1,1,0,0],[1990,7,14,9,30],[2000,1,1,12,0],[2025,3,15,6,46],[2050,12,31,23,59]];
   for (const [y,m,d,h,mi] of cases) {

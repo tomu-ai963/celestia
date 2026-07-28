@@ -1,13 +1,30 @@
 /**
- * astro.mjs — 天文計算エンジン（JPL近似軌道要素 + 月の短縮ELP級数）
+ * astro.mjs — 天文計算エンジン（JPL近似軌道要素 + Meeus の月）
  *
- * P1 までは index.html にインラインで置いていたものを、そのままモジュールへ切り出した。
- * 計算式・係数は変更していない。Node からも import できるようにしたのは、
- * 逆行判定を既知の事象と突き合わせるテストのため。
+ * ■ 基準フレーム（P3 で統一）
+ *
+ * 天体ごとに素の計算が返すフレームは揃っていない:
+ *   - helio() の JPL 近似軌道要素   … J2000 の平均黄道・平均分点
+ *   - moon.mjs の Meeus 級数        … 分点 of-date
+ *   - 月の平均交点・平均リリス      … 分点 of-date（平均要素なので）
+ *   - GMST から作る天頂ベクトル     … 分点 of-date
+ * そのままだと太陽と惑星だけが一般歳差 p_A ぶん（1900年で 1.39°）ずれる。
+ * computeChart() は helio() 由来のベクトルに precessVec() をかけ、
+ * **出力を全天体 of-date に統一**している。星野側（celestialGroup）も同じ
+ * 変換行列で回るので、画面上の全要素が同一フレームに乗る。
+ * 各天体の素のフレームと出典は README の表を参照。
+ *
+ * ■ 位置の種別
+ * 出力は astrometric（光行時間補正あり・年周光行差なし・章動なし）。
+ * Horizons の VEC_CORR='LT' と同じ定義で、突き合わせはこの条件で行う。
  */
-import { toJ2000Lon } from './precession.mjs';
+import { toJ2000Lon, precessVec, precessVecInv } from './precession.mjs';
+import { moonPos } from './moon.mjs';
+import { nutation, meanObliquity } from './nutation.mjs';
 
 export const D2R = Math.PI / 180, R2D = 180 / Math.PI, AU = 149597870.7;
+/** 光が 1 AU を進むのに要する日数（IAU 2009 の光行時間 499.004784 s より） */
+export const LIGHT_DAYS_PER_AU = 0.005775518331;
 export const sin = a => Math.sin(a * D2R), cos = a => Math.cos(a * D2R);
 export const norm = a => ((a % 360) + 360) % 360;
 
@@ -40,6 +57,11 @@ export function jdToUTC(jd) {
 }
 
 // a, e, I, L, longPeri, longNode  +  per-century rates
+// 出典: JPL Solar System Dynamics "Approximate Positions of the Planets" Table 1
+//   https://ssd.jpl.nasa.gov/planets/approx_pos.html
+//   「with respect to the mean ecliptic and equinox of J2000」/ 適用範囲 1800–2050 AD
+//   同ページの公称最大誤差（日心黄経・秒角）: 水星15 金星20 地球20 火星40
+//   木星400 土星600 天王星50 海王星10（冥王星は記載なし）
 export const ELEM = {
   mercury:[0.38709927,0.20563593,7.00497902,252.25032350,77.45779628,48.33076593,
            0.00000037,0.00001906,-0.00594749,149472.67411175,0.16047689,-0.12534081],
@@ -61,6 +83,7 @@ export const ELEM = {
            -0.00031596,0.00005170,0.00004818,145.20780515,-0.04062942,-0.01183482]
 };
 
+/** 日心黄道直交座標（AU）。フレームは **J2000** で、of-date への変換はしない */
 export function helio(name, T) {
   const E = ELEM[name];
   const a=E[0]+E[6]*T, e=E[1]+E[7]*T, I=E[2]+E[8]*T,
@@ -82,29 +105,7 @@ export function helio(name, T) {
   };
 }
 
-export function moonPos(T) {
-  const Lp=norm(218.3164477+481267.88123421*T-0.0015786*T*T);
-  const D =norm(297.8501921+445267.1114034*T-0.0018819*T*T);
-  const M =norm(357.5291092+35999.0502909*T-0.0001536*T*T);
-  const Mp=norm(134.9633964+477198.8675055*T+0.0087414*T*T);
-  const F =norm(93.2720950+483202.0175233*T-0.0036539*T*T);
-  const l = Lp
-   +6.288774*sin(Mp)      +1.274027*sin(2*D-Mp)   +0.658314*sin(2*D)
-   +0.213618*sin(2*Mp)    -0.185116*sin(M)        -0.114332*sin(2*F)
-   +0.058793*sin(2*D-2*Mp)+0.057066*sin(2*D-M-Mp) +0.053322*sin(2*D+Mp)
-   +0.045758*sin(2*D-M)   -0.040923*sin(M-Mp)     -0.034720*sin(D)
-   -0.030383*sin(M+Mp)    +0.015327*sin(2*D-2*F)  -0.012528*sin(Mp+2*F)
-   +0.010980*sin(Mp-2*F)  +0.010675*sin(4*D-Mp)   +0.010034*sin(3*Mp);
-  const b =
-    5.128122*sin(F)       +0.280602*sin(Mp+F)     +0.277693*sin(Mp-F)
-   +0.173237*sin(2*D-F)   +0.055413*sin(2*D-Mp+F) +0.046271*sin(2*D-Mp-F)
-   +0.032573*sin(2*D+F)   +0.017198*sin(2*Mp+F)   +0.009266*sin(2*D+Mp-F);
-  const dist = 385000.56 - 20905.355*cos(Mp) - 3699.111*cos(2*D-Mp)
-             - 2955.968*cos(2*D) - 569.925*cos(2*Mp);
-  const lam=norm(l), bet=b, r=dist/AU;
-  return {lon:lam, lat:bet, dist:r,
-    x:r*cos(bet)*cos(lam), y:r*cos(bet)*sin(lam), z:r*sin(bet)};
-}
+export { moonPos, moonPosShort } from './moon.mjs';
 
 export const SIGNS=['牡羊','牡牛','双子','蟹','獅子','乙女','天秤','蠍','射手','山羊','水瓶','魚'];
 export const GLYPH=['ARIES','TAURUS','GEMINI','CANCER','LEO','VIRGO','LIBRA','SCORPIO','SAGITTARIUS','CAPRICORN','AQUARIUS','PISCES'];
@@ -134,15 +135,61 @@ export const BODIES=[
   {k:'lilith', n:'リリス',lt:'LILITH',  c:0x9a86c9, s:0.8, mo:0.111}
 ];
 
+export const PLANETS = ['mercury','venus','mars','jupiter','saturn','uranus','neptune','pluto'];
+
+/** 月の質量比 M_moon / (M_earth + M_moon)（IAU 2009 の 1/81.30057 より） */
+export const MOON_MASS_FRACTION = 0.012150585;
+
+/**
+ * 地球中心の日心ベクトル（J2000）。
+ *
+ * ELEM の 'earth' は JPL の表では **EM Bary = 地球・月の重心** で、地球そのものではない。
+ * 地球は重心から月と反対側に 4,671 km（3.1e-5 AU）ずれている。
+ * 影響は距離に反比例するので、太陽で最大 6.4″、火星で 2″ 前後、
+ * 外惑星ではほぼゼロ。月の位置は of-date なので J2000 に戻してから引く。
+ */
+export function earthPos(T, moon = moonPos(T)) {
+  const B = helio('earth', T);
+  const mJ = precessVecInv({ x: moon.x, y: moon.y, z: moon.z }, T);
+  return {
+    x: B.x - MOON_MASS_FRACTION * mJ.x,
+    y: B.y - MOON_MASS_FRACTION * mJ.y,
+    z: B.z - MOON_MASS_FRACTION * mJ.z
+  };
+}
+
+/**
+ * 惑星の地心ベクトル（J2000 黄道直交）を光行時間補正つきで返す。
+ *
+ * 見えているのは τ = 距離/光速 だけ前の惑星なので、地球は時刻 T のまま、
+ * 惑星だけ T − τ の位置を使う。τ は距離に依存し距離は τ に依存するので反復するが、
+ * τ の変化ぶんの位置変化は 2桁ずつ小さくなるため 2回で 0.001″ 未満に収束する。
+ *
+ * 効き幅は内惑星で大きい（金星は τ≈14分 × 1.2°/日 ≒ 42″）。
+ * 太陽は日心フレームで静止していて τ の間に動かないので補正はゼロ（アプリでは
+ * 適用しない）。月は τ≈1.3秒 × 13.18°/日 ≒ 0.7″ で無視できるため、
+ * moon.mjs 側でも補正していない。
+ */
+export function geoVecLT(name, T, E, iters = 2) {
+  let p = helio(name, T), tau = 0;
+  for (let i = 0; i < iters; i++) {
+    const d = Math.hypot(p.x - E.x, p.y - E.y, p.z - E.z);
+    tau = d * LIGHT_DAYS_PER_AU;
+    p = helio(name, T - tau / 36525);
+  }
+  return { x: p.x - E.x, y: p.y - E.y, z: p.z - E.z, tau };
+}
+
 export function computeChart(jd, latDeg, lonDeg) {
   const T=(jd-2451545.0)/36525;
-  const E=helio('earth',T);
   const out={};
-  // 太陽 = 地球ヘリオの反転
-  out.sun = geo(-E.x,-E.y,-E.z);
+  // 月は of-date で出てくるので歳差をかけない
   const m=moonPos(T); out.moon={lon:m.lon,lat:m.lat,dist:m.dist,x:m.x,y:m.y,z:m.z};
-  ['mercury','venus','mars','jupiter','saturn','uranus','neptune','pluto'].forEach(k=>{
-    const p=helio(k,T); out[k]=geo(p.x-E.x,p.y-E.y,p.z-E.z);
+  const E=earthPos(T, m);
+  // 太陽 = 地球ヘリオの反転（日心フレームで静止しているので光行時間補正は不要）
+  out.sun = geo(-E.x,-E.y,-E.z);
+  PLANETS.forEach(k=>{
+    const v=geoVecLT(k,T,E); out[k]=geo(v.x,v.y,v.z);
   });
   const nodeLon=norm(125.04452-1934.136261*T);
   const lilLon =norm(83.3532465+4069.0137287*T);
@@ -151,17 +198,71 @@ export function computeChart(jd, latDeg, lonDeg) {
   // 地方恒星時 → 天頂ベクトル
   const gmst=norm(280.46061837+360.98564736629*(jd-2451545.0)+0.000387933*T*T);
   const lst=norm(gmst+lonDeg);
-  const eps=23.439291-0.0130042*T;
+  const eps=meanObliquity(T);
   const cx=cos(latDeg)*cos(lst), cy=cos(latDeg)*sin(lst), cz=sin(latDeg);
   out._zenith={x:cx, y:cy*cos(eps)+cz*sin(eps), z:-cy*sin(eps)+cz*cos(eps)};
   out._T=T; out._lst=lst;
   return out;
 
+  /** J2000 の地心ベクトル → of-date に歳差回転してから黄経・黄緯に直す */
   function geo(x,y,z){
-    const r=Math.hypot(x,y,z);
-    return {x,y,z,dist:r,lon:norm(Math.atan2(y,x)*R2D),lat:Math.asin(z/r)*R2D};
+    const v=precessVec({x,y,z},T);
+    const r=Math.hypot(v.x,v.y,v.z);
+    return {x:v.x,y:v.y,z:v.z,dist:r,
+      lon:norm(Math.atan2(v.y,v.x)*R2D),lat:Math.asin(v.z/r)*R2D};
   }
   function fromLon(L,r){return {lon:L,lat:0,dist:r,x:r*cos(L),y:r*sin(L),z:0};}
+}
+
+/** 光速（AU/日）。1 / LIGHT_DAYS_PER_AU */
+export const C_AU_PER_DAY = 1 / LIGHT_DAYS_PER_AU;
+
+/**
+ * 地球の公転速度ベクトル（J2000 黄道, AU/日）。earthPos の中心差分。
+ * 刻み 0.5日 で打ち切り誤差は 1e-7 AU/日（年周光行差にして 0.02″）。
+ */
+export function earthVel(T, h = 0.5 / 36525) {
+  const a = earthPos(T - h), b = earthPos(T + h);
+  const k = 1 / (2 * h * 36525);
+  return { x: (b.x - a.x) * k, y: (b.y - a.y) * k, z: (b.z - a.z) * k };
+}
+
+/**
+ * astrometric → apparent。地心の of-date ベクトルに年周光行差と章動を入れる。
+ *
+ * 年周光行差は「観測者の速度の向きへ v/c だけ倒す」一次の式で、大きさは最大 20.5″。
+ * 二次項は 0.001″ なので落としている。Horizons の apparent（VEC_CORR='LT+S'
+ * 相当、quantity 31）と突き合わせるためだけに使い、表示には使っていない。
+ */
+export function toApparent(vecOfDate, T) {
+  const v = precessVec(earthVel(T), T);            // 速度も of-date に揃える
+  const r = Math.hypot(vecOfDate.x, vecOfDate.y, vecOfDate.z);
+  const ax = vecOfDate.x / r + v.x / C_AU_PER_DAY;
+  const ay = vecOfDate.y / r + v.y / C_AU_PER_DAY;
+  const az = vecOfDate.z / r + v.z / C_AU_PER_DAY;
+  const n = Math.hypot(ax, ay, az);
+  return {
+    lon: norm(Math.atan2(ay, ax) * R2D + nutation(T).dpsi),
+    lat: Math.asin(az / n) * R2D
+  };
+}
+
+/**
+ * 太陽の**視**黄経（真分点 of-date）。
+ *
+ * computeChart が返すのは平均分点の astrometric なので、春分の定義
+ * 「視黄経 = 0」と直接は比べられない。差は2つだけ:
+ *   年周光行差  −20.4898″/R  … 地球の公転で見かけが進行方向へずれる
+ *   章動 Δψ     ±17″        … 平均分点 → 真分点
+ * この2つを足したものが Horizons の apparent 黄経に対応する。
+ * 逆に言えば、フレームを取り違えていれば 1.4° 級のずれが出るので、
+ * この関数が 0 を返すことは of-date であることの十分に鋭い検査になる。
+ */
+export function apparentSunLon(jd) {
+  const T = (jd - 2451545.0) / 36525;
+  const c = computeChart(jd, 0, 0);
+  const aberr = -20.4898 / c.sun.dist / 3600;
+  return norm(c.sun.lon + nutation(T).dpsi + aberr);
 }
 
 /* ============================================================
