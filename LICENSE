@@ -1,3 +1,13 @@
+This MIT license applies to the source code in this repository
+(index.html, tools/, tests/).
+
+The data files under data/ are derivative works of CC BY-SA licensed
+sources (HYG Database v4.1, Stellarium sky cultures) and are licensed
+under CC BY-SA instead. See data/ATTRIBUTION.md for full attribution,
+the list of modifications, and license links.
+
+---
+
 MIT License
 
 Copyright (c) 2026 tomu-ai963

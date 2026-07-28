@@ -365,7 +365,11 @@ function bvToRGB(bv){
 function magSize(mag){ return Math.min(20, Math.max(2.1, 12.5*Math.pow(10,-mag/7))); }
 function magBright(mag){ return Math.min(1.05, 0.50+0.62*Math.pow(10,-mag/5.5)); }
 
-const starGroup=new THREE.Group(); scene.add(starGroup);
+/* 天球に固定されたもの（星野・星座線・IAU境界・天の川）の親グループ。
+   歳差はチャート生成時にこのグループごと黄道極(+Y)まわりへ回して適用する。
+   回転の符号は tools/precession.mjs + tests/precession.test.mjs で確定済み */
+const celestialGroup=new THREE.Group(); scene.add(celestialGroup);
+const starGroup=new THREE.Group(); celestialGroup.add(starGroup);
 function buildStars(data){
   const N=data.count, s=data.stars;
   const pos=new Float32Array(N*3), col=new Float32Array(N*3), sz=new Float32Array(N);
@@ -395,7 +399,7 @@ function buildStars(data){
   starGroup.add(new THREE.Points(g,mat));
 }
 /* --- 星座線（Stellarium western skyculture, CC BY-SA） --- */
-const constGroup=new THREE.Group(); scene.add(constGroup);
+const constGroup=new THREE.Group(); celestialGroup.add(constGroup);
 function buildConstellations(data){
   const R=1596;
   const toVec=(lon,lat)=>new THREE.Vector3(
@@ -437,6 +441,61 @@ async function loadStars(){
 }
 loadStars();
 
+/* --- 天の川（装飾レイヤー） ---
+   注意: これは天文データではない。銀河座標系の向き（銀河北極・銀河中心の J2000 値）
+   だけを正確に再現した手続き生成の点群で、HYG 実データの星野（starGroup）とは
+   明確に別レイヤー。実星野より背面（半径大きめ）かつ淡く描く。 */
+function buildMilkyWay(){
+  // 銀河 → 赤道(J2000) → 黄道 の回転を基底ベクトルで構成
+  const eqVec=(ra,dec)=>[cos(dec)*cos(ra),cos(dec)*sin(ra),sin(dec)];
+  const zg=eqVec(192.85948,27.12825);   // 銀河北極 (J2000)
+  let xg=eqVec(266.40500,-28.93617);    // 銀河中心方向 (l=0,b=0)
+  const d0=xg[0]*zg[0]+xg[1]*zg[1]+xg[2]*zg[2];
+  xg=xg.map((v,i)=>v-zg[i]*d0);         // 直交化（カタログ値の丸め対策）
+  const xl=Math.hypot(xg[0],xg[1],xg[2]); xg=xg.map(v=>v/xl);
+  const yg=[zg[1]*xg[2]-zg[2]*xg[1], zg[2]*xg[0]-zg[0]*xg[2], zg[0]*xg[1]-zg[1]*xg[0]];
+  const E=23.4392911;
+  const gal2ecl=(l,b)=>{
+    const cb=cos(b), q=[0,1,2].map(i=>xg[i]*cb*cos(l)+yg[i]*cb*sin(l)+zg[i]*sin(b));
+    return [q[0], q[1]*cos(E)+q[2]*sin(E), -q[1]*sin(E)+q[2]*cos(E)];
+  };
+  const N=9000, pos=new Float32Array(N*3), col=new Float32Array(N*3), sz=new Float32Array(N);
+  const R=1660;
+  let i=0;
+  while(i<N){
+    const l=Math.random()*360;
+    const dl=norm(l+180)-180;                       // 銀河中心からの銀経差 [-180,180)
+    const toC=Math.exp(-dl*dl/(2*70*70));           // 中心への近さ 0..1
+    if(Math.random()>0.30+0.70*toC) continue;       // 銀河中心側ほど高密度（非対称性）
+    const sigma=5.5+6.0*toC;                        // バルジ側は帯が太い
+    const g=(Math.random()+Math.random()+Math.random()+Math.random()-2)*1.73;
+    const b=g*sigma;                                // 銀緯方向はガウス減衰
+    const p=gal2ecl(l,b);
+    pos[i*3]=p[0]*R; pos[i*3+1]=p[2]*R; pos[i*3+2]=-p[1]*R; // 黄道直交 → (x,z,-y)
+    const br=(0.014+0.022*Math.random())*(0.35+0.65*toC);
+    const warm=0.35+0.65*toC;                       // 中心側はやや暖色
+    col[i*3]=br*(0.82+0.15*warm); col[i*3+1]=br*0.85; col[i*3+2]=br*(1.02-0.20*warm);
+    sz[i]=42+Math.random()*55;
+    i++;
+  }
+  const g2=new THREE.BufferGeometry();
+  g2.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  g2.setAttribute('color',new THREE.BufferAttribute(col,3));
+  g2.setAttribute('asize',new THREE.BufferAttribute(sz,1));
+  const mat=new THREE.ShaderMaterial({
+    uniforms:{map:{value:SPR}},
+    vertexShader:`attribute float asize;varying vec3 vC;void main(){vC=color;
+      vec4 mv=modelViewMatrix*vec4(position,1.);
+      gl_PointSize=asize*(600./-mv.z);
+      gl_Position=projectionMatrix*mv;}`,
+    fragmentShader:`uniform sampler2D map;varying vec3 vC;void main(){
+      vec4 t=texture2D(map,gl_PointCoord);gl_FragColor=vec4(vC,1.)*t;}`,
+    transparent:true,blending:THREE.AdditiveBlending,depthWrite:false,vertexColors:true
+  });
+  celestialGroup.add(new THREE.Points(g2,mat));
+}
+buildMilkyWay();
+
 /* --- 黄道帯のリング & サイン分割 --- */
 const SKY=1500;
 function label(text,size,color,op){
@@ -476,23 +535,24 @@ const zodiacGroup=new THREE.Group(); scene.add(zodiacGroup);
 })();
 
 /* --- 実際の星座境界（歳差ズレの可視化） --- */
-const realGroup=new THREE.Group(); realGroup.visible=false; scene.add(realGroup);
-function buildReal(T){
-  while(realGroup.children.length) realGroup.remove(realGroup.children[0]);
-  const shift = 1.39697*T;
+// 境界は J2000 固定値で一度だけ描き、歳差は親の celestialGroup の回転に乗せる
+// （個別に +1.39697*T を足すと親グループ回転と二重適用になるため廃止）
+const realGroup=new THREE.Group(); realGroup.visible=false; celestialGroup.add(realGroup);
+function buildReal(){
   IAU.slice(0,13).forEach(([b,n],i)=>{
-    const a=norm(b+shift);
+    const a=b;
     const seg=[];
     for(let y=-7;y<=7;y+=1) seg.push(ecl2three(cos(a)*cos(y),sin(a)*cos(y),sin(y),SKY*0.97));
     realGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(seg),
       new THREE.LineBasicMaterial({color:0x7d9fd0,transparent:true,opacity:.4})));
-    const prev=i===0?norm(IAU[12][0]+shift):norm(IAU[i-1][0]+shift);
+    const prev=i===0?IAU[12][0]:IAU[i-1][0];
     let mid=prev+norm(a-prev)/2;
     const lb=label(n.replace('座',''),46,'#8fb4e0',.5);
     lb.position.copy(ecl2three(cos(mid)*cos(-9),sin(mid)*cos(-9),sin(-9),SKY*0.93));
     realGroup.add(lb);
   });
 }
+buildReal();
 
 /* --- 地平線 --- */
 const horizGroup=new THREE.Group(); scene.add(horizGroup);
@@ -622,7 +682,9 @@ function run(){
   const tz=parseFloat(document.getElementById('place').selectedOptions[0].dataset.tz||0);
   const jd=julianDay(Y,M,D,h,mi,tz);
   chart=computeChart(jd,la,lo);
-  placeBodies(); renderReadout(); buildHorizon(chart._zenith); buildReal(chart._T);
+  placeBodies(); renderReadout(); buildHorizon(chart._zenith);
+  // 歳差: J2000 の天球固定レイヤーを当日の黄経へ回す（符号は precession.test.mjs で確定）
+  celestialGroup.rotation.y = 1.39697*chart._T*D2R;
   focusKey=null; document.getElementById('card').classList.remove('show');
   document.getElementById('stamp').innerHTML =
     `${dv.replace(/-/g,'.')} ${tv}<br>${la.toFixed(2)}° ${lo.toFixed(2)}°<br>JD ${jd.toFixed(4)}`;
