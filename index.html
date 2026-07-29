@@ -156,8 +156,41 @@ button.go:hover{background:var(--gold);color:var(--void)}
 #starload.err{color:var(--gold-dim);animation:none;opacity:.9}
 @keyframes starpulse{0%,100%{opacity:.8}50%{opacity:.35}}
 
+/* ---------- 折りたたみカテゴリ（トグルが増えてもコンソールが破綻しないように） ---------- */
+.grp{border-top:1px solid rgba(217,180,95,.12)}
+.grp>summary{list-style:none;cursor:pointer;user-select:none;display:flex;align-items:center;gap:9px;
+  padding:10px 0;font-size:9px;letter-spacing:.26em;color:var(--gold-dim)}
+.grp>summary::-webkit-details-marker{display:none}
+.grp>summary::before{content:'＋';font-size:9px;color:var(--gold-dim)}
+.grp[open]>summary::before{content:'−'}
+.grp>summary .tag{font-family:'JetBrains Mono',monospace;letter-spacing:.02em;
+  color:rgba(223,231,242,.28);font-size:9px}
+.togs{display:flex;gap:11px 20px;flex-wrap:wrap;padding:2px 0 12px}
+#astroPanel{display:grid;grid-template-columns:1fr 1fr;gap:11px 14px;max-width:520px;
+  padding:2px 0 14px;border-left:1px solid rgba(125,111,176,.35);padding-left:14px;margin-bottom:10px}
+#astroPanel[hidden]{display:none}
+#astroPanel .f.wide{grid-column:1/-1}
+#astroPanel .hint{font-size:9px;letter-spacing:.06em;color:rgba(223,231,242,.3);line-height:1.6}
+#orb{-webkit-appearance:none;appearance:none;height:18px;background:transparent;cursor:pointer;
+  padding:0;border:none;width:100%}
+#orb::-webkit-slider-runnable-track{height:1px;background:rgba(125,111,176,.55)}
+#orb::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:50%;
+  background:var(--violet);margin-top:-5px;box-shadow:0 0 8px rgba(125,111,176,.7)}
+#orb::-moz-range-track{height:1px;background:rgba(125,111,176,.55)}
+#orb::-moz-range-thumb{width:10px;height:10px;border:none;border-radius:50%;background:var(--violet)}
+#astroNote{grid-column:1/-1;font-size:10px;line-height:1.6;letter-spacing:.04em;
+  color:rgba(223,231,242,.42);min-height:13px}
+#astroNote.warn{color:#e08a5f}
+.rd-ang{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--violet)}
+#card dd.hs{color:var(--violet)}
+#cdInterp{margin-top:11px;padding-top:10px;border-top:1px solid rgba(255,255,255,.07);
+  font-size:11px;line-height:1.75;letter-spacing:.03em;color:rgba(223,231,242,.72)}
+#cdInterp.none{color:rgba(223,231,242,.3);font-size:10px;line-height:1.6}
+#cdInterp[hidden]{display:none}
+
 @media (max-width:720px){
   #timebar{gap:7px;padding-bottom:12px}
+  #astroPanel{grid-template-columns:1fr}
   #tnow{order:-1;width:100%;font-size:10px}
   #tslide{flex-basis:100%;order:1}
   #readout{top:auto;bottom:184px;width:100%;height:118px;padding:0 16px;
@@ -198,7 +231,10 @@ button.go:hover{background:var(--gold);color:var(--void)}
     <dt>実星座</dt><dd id="cdConst">—</dd>
     <dt>運動</dt><dd id="cdMot">—</dd>
     <dt>出生時から</dt><dd id="cdNatal">—</dd>
+    <dt id="cdHouseK" hidden>ハウス</dt><dd id="cdHouse" class="hs" hidden>—</dd>
+    <dt id="cdAspK" hidden>アスペクト</dt><dd id="cdAsp" hidden>—</dd>
   </dl>
+  <div id="cdInterp" hidden></div>
 </div>
 
 <div id="hint">ドラッグで視点移動 · ホイールでズーム</div>
@@ -246,11 +282,46 @@ button.go:hover{background:var(--gold);color:var(--void)}
     </div>
     <div class="actions">
       <button class="go" id="run">天球を生成</button>
-      <div class="tog on" id="tDist"><i></i>距離を反映</div>
-      <div class="tog on" id="tHoriz"><i></i><span id="tHorizTx">地平線</span></div>
-      <div class="tog" id="tReal"><i></i>実際の星座</div>
-      <div class="tog on" id="tTrail"><i></i>軌跡</div>
     </div>
+    <details class="grp" open>
+      <summary>天球の表示</summary>
+      <div class="togs">
+        <div class="tog on" id="tDist"><i></i>距離を反映</div>
+        <div class="tog on" id="tHoriz"><i></i><span id="tHorizTx">地平線</span></div>
+        <div class="tog" id="tReal"><i></i>実際の星座</div>
+        <div class="tog on" id="tTrail"><i></i>軌跡</div>
+      </div>
+    </details>
+    <details class="grp">
+      <summary>占星術レイヤー<span class="tag">既定オフ / 天文コアとは別レイヤー</span></summary>
+      <div class="togs">
+        <div class="tog" id="tAstro"><i></i>ハウスと感受点</div>
+      </div>
+      <div id="astroPanel" hidden>
+        <div class="f"><label>ハウス方式</label>
+          <select id="hsMethod">
+            <option value="whole">ホールサイン</option>
+            <option value="equal">イコール</option>
+            <option value="placidus">プラシーダス</option>
+          </select>
+        </div>
+        <div class="f"><label>アスペクトの対象</label>
+          <select id="aspSet">
+            <option value="none">表示しない</option>
+            <option value="core" selected>主要7天体</option>
+            <option value="outer">＋外惑星</option>
+            <option value="all">全12天体</option>
+          </select>
+        </div>
+        <div class="f wide"><label>オーブ倍率 <span id="orbTx">×1.0</span></label>
+          <input type="range" id="orb" min="0.4" max="2" step="0.1" value="1">
+          <div class="hint">既定は太陽・月 9°、水星〜火星 7°、木星・土星 6°、天王星〜冥王星 5°、
+            交点・リリス 3°（2天体の平均 × アスペクト係数）</div>
+        </div>
+        <div class="f wide"><div class="tog" id="tInterp"><i></i>解釈テキスト（外部データ）</div></div>
+        <div id="astroNote"></div>
+      </div>
+    </details>
   </div>
 </div>
 
@@ -274,6 +345,12 @@ import {
 import { precessionMatrixThree, eclToThree, eclVecToThree } from './src/precession.mjs';
 import { zonedToJd, jdToZoned, zoneList, isValidZone, formatOffset } from './src/timezone.mjs';
 import { searchPlace, reasonText } from './src/geocode.mjs';
+/* 占星術レイヤー（P4）。天文コアには手を入れず、その出力を入力として受け取る一方向の依存。
+   既定オフなので、トグルが off の間は computeHouses も findAspects も呼ばれない */
+import {
+  computeHouses, houseOf, findAspects, BODY_SETS, HOUSE_METHODS,
+  interpretationKeys, interpret, hasInterpreter, signKey
+} from './src/astrology.mjs';
 
 /* ============================================================
    2. 3D 天球
@@ -534,6 +611,66 @@ function updateHorizon(z){
   horizLabel.position.copy(up).multiplyScalar(SKY*0.9);
 }
 
+/* --- 占星術レイヤー（既定オフ / P4） ---
+
+   ■ 描いているものが幾何学的に何なのか
+   ハウスカスプは「黄経の値」であって、天球上の面ではない。3Dに落とすときに
+   何を描くかは自明ではないので、ここでは意図的に **黄道帯の中の目盛り** として描く:
+     カスプ … その黄経の位置に、黄緯 ±13° の範囲だけ短い弧を立てる
+     ハウス番号 … 隣り合うカスプの中間の黄経に置く
+   黄道極を通る大円（＝全天に伸びる分割面）にしていないのは、それが**嘘になる方式が
+   あるから**。ホールサインとイコールは黄経だけで定義されるので大円で正しいが、
+   プラシーダスは時角（半弧）の分割で定義されていて、その分割面は大円ですらない
+   曲面になる。3方式で同じ描き方をしたいので、どの方式でも正しく読める
+   「黄道上のどこがカスプか」だけを描き、面の形は主張しない。
+   この簡略化は README の「既知の制約」にも書いてある。
+
+   ■ ASC–DSC 軸と MC–IC 軸だけは定義が明快なので別扱い
+   地平線・子午線が黄道と交わる点そのもの。天球側にはその黄経の位置に短い放射マークと
+   ラベルを置き、中心の輪（下記）では ASC/MC 側を明るく、対向側（DSC/IC）を暗くした
+   十字として描く。2軸がどちらを向いているかが一目で分かるようにするため。
+
+   ■ アスペクト線は中心の小さな「輪」の中に引く
+   アスペクトは黄経の角度関係なので、天体の実際の位置（距離モードで半径が変わる）を
+   結ぶのではなく、**黄道面上のその黄経の点どうし**を弦で結ぶ。
+   半径は天球（1500）ではなく 175 と小さく取ってある。天球いっぱいに弦を張ると
+   視界を横切る線が星野より手前に来て、実データの星野が主役でなくなるため。
+   オーブの狭さは加算合成の明るさで表す（WebGL の線幅は環境依存でほぼ効かない）。 */
+const astroGroup=new THREE.Group(); astroGroup.visible=false; scene.add(astroGroup);
+const CUSP_R=SKY*0.93, CUSP_LAT=13, WHEEL_R=175, ASPECT_MAX=66;
+const cuspLines=[], cuspLabels=[], axisTicks={}, axisSpokes={}, axisLabels={};
+(function initAstro(){
+  for(let i=0;i<12;i++){
+    const pts=[];
+    for(let b=-CUSP_LAT;b<=CUSP_LAT;b+=2) pts.push(new THREE.Vector3());
+    const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({color:0x9b8ac9,transparent:true,opacity:.32}));
+    ln.frustumCulled=false; astroGroup.add(ln); cuspLines.push(ln);
+    const lb=label(String(i+1),34,'#a595d6',.52); astroGroup.add(lb); cuspLabels.push(lb);
+  }
+  // アスペクト輪の縁（弦の行き先が見えるように、うっすらとだけ）
+  const ring=[];
+  for(let i=0;i<=360;i+=2) ring.push(ecl2three(cos(i),sin(i),0,WHEEL_R));
+  astroGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ring),
+    new THREE.LineBasicMaterial({color:0x7d6fb0,transparent:true,opacity:.13})));
+  for(const [k,col,op] of [['asc','#d9b45f',.60],['dsc','#8a7238',.28],
+                           ['mc','#e6dcbc',.60],['ic','#7d6fb0',.28]]){
+    const mk=(op2)=>{ const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+        [new THREE.Vector3(),new THREE.Vector3()]),
+        new THREE.LineBasicMaterial({color:new THREE.Color(col),transparent:true,opacity:op2}));
+      ln.frustumCulled=false; astroGroup.add(ln); return ln; };
+    axisTicks[k]=mk(op);            // 天球側の放射マーク（0.88 → 0.995）
+    axisSpokes[k]=mk(op*0.8);       // 中心の輪の中の十字（0 → WHEEL_R）
+    const lb=label(k.toUpperCase(),42,col,op+0.18); astroGroup.add(lb); axisLabels[k]=lb;
+  }
+})();
+const aspGeo=new THREE.BufferGeometry();
+aspGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(ASPECT_MAX*2*3),3));
+aspGeo.setAttribute('color',   new THREE.BufferAttribute(new Float32Array(ASPECT_MAX*2*3),3));
+const aspLines=new THREE.LineSegments(aspGeo,new THREE.LineBasicMaterial({
+  vertexColors:true,transparent:true,opacity:.62,blending:THREE.AdditiveBlending,depthWrite:false}));
+aspLines.frustumCulled=false; astroGroup.add(aspLines);
+
 /* --- 天体 --- */
 function glowTex(hex){
   const c=document.createElement('canvas');c.width=c.height=128;
@@ -573,6 +710,9 @@ scene.add(earth);
 let chart=null, natalChart=null, useDist=true, focusKey=null, showTrails=true;
 let latDeg=0, lonDeg=0, tzId='Asia/Tokyo';   // 固定オフセットではなく IANA ゾーンID
 const posTarget={}, posNow={}, retro={};
+/* 占星術レイヤーの状態。**既定はすべてオフ側**で、オンにするまで計算も描画もしない */
+let astroOn=false, houseMethod='whole', aspectSet='core', orbScale=1, showInterp=false;
+let houses=null, aspects=[], lastRates=null, interpTexts={}, lastNote='';
 
 /* --- 天体の配置 --- */
 function bodyVec(p){
@@ -632,6 +772,76 @@ function placeNatal(){
     const s=b.s*26*(useDist?1:0.85)*0.55;
     sp.scale.set(s,s,1);
   });
+}
+
+/* --- 占星術レイヤーの更新（オンのときだけ呼ばれる） --- */
+const ASPECT_COLORS=new Map();
+const colorOf=hex=>{ let c=ASPECT_COLORS.get(hex);
+  if(!c){ c=new THREE.Color(hex); ASPECT_COLORS.set(hex,c); } return c; };
+/** 黄道傾斜角から決まる極圏。ここを超えると「東の地平線」という言い方が成立しない */
+const POLAR_CIRCLE=66.56;
+function updateAstro(){
+  if(!chart) return;
+  houses=computeHouses(chart,latDeg,houseMethod);
+  const cusps=houses.cusps;
+  for(let i=0;i<12;i++){
+    const arr=cuspLines[i].geometry.attributes.position;
+    let n=0;
+    for(let b=-CUSP_LAT;b<=CUSP_LAT;b+=2){
+      const v=eclLL(cusps[i],b,CUSP_R); arr.setXYZ(n++,v.x,v.y,v.z);
+    }
+    arr.needsUpdate=true;
+    const span=norm(cusps[(i+1)%12]-cusps[i])||30;   // ハウス番号は区間の中央へ
+    cuspLabels[i].position.copy(eclLL(norm(cusps[i]+span/2),-CUSP_LAT-5,CUSP_R*0.98));
+  }
+  for(const k of ['asc','dsc','mc','ic']){
+    const dir=eclLL(houses[k],0,1);
+    const t=axisTicks[k].geometry.attributes.position;
+    t.setXYZ(0,dir.x*SKY*0.88,dir.y*SKY*0.88,dir.z*SKY*0.88);
+    t.setXYZ(1,dir.x*SKY*0.995,dir.y*SKY*0.995,dir.z*SKY*0.995); t.needsUpdate=true;
+    const s=axisSpokes[k].geometry.attributes.position;
+    s.setXYZ(0,0,0,0); s.setXYZ(1,dir.x*WHEEL_R,dir.y*WHEEL_R,dir.z*WHEEL_R); s.needsUpdate=true;
+    axisLabels[k].position.copy(dir).multiplyScalar(SKY*0.845);
+  }
+  const set=BODY_SETS.find(s=>s.k===aspectSet);
+  aspects = set ? findAspects(chart,{rates:lastRates,orbScale,bodies:set.keys}) : [];
+  const pos=aspGeo.attributes.position, col=aspGeo.attributes.color;
+  let n=0;
+  for(const a of aspects.slice(0,ASPECT_MAX)){
+    // 天体の実位置ではなく「その黄経の黄道面上の点」を結ぶ（アスペクトは黄経の関係）
+    const pa=eclLL(chart[a.a].lon,0,WHEEL_R*0.97), pb=eclLL(chart[a.b].lon,0,WHEEL_R*0.97);
+    const c=colorOf(a.color), k=0.14+0.62*a.tightness;   // オーブが狭いほど明るい
+    pos.setXYZ(n,pa.x,pa.y,pa.z); col.setXYZ(n,c.r*k,c.g*k,c.b*k); n++;
+    pos.setXYZ(n,pb.x,pb.y,pb.z); col.setXYZ(n,c.r*k,c.g*k,c.b*k); n++;
+  }
+  pos.needsUpdate=true; col.needsUpdate=true; aspGeo.setDrawRange(0,n);
+  showAstroNote();
+  uiDirty=true;
+}
+/** 方式の説明と、フォールバック・高緯度の注意。**黙って別方式に変わるのを避ける** */
+function showAstroNote(){
+  const el=document.getElementById('astroNote');
+  let cls='', tx;
+  if(houses.fallback){
+    cls='warn';
+    tx=`${houses.fallback.text}。ホールサインで表示しています`;
+  }else{
+    tx=HOUSE_METHODS.find(m=>m.k===houses.method).d;
+    if(Math.abs(latDeg)>POLAR_CIRCLE)
+      tx+=' / 極圏なので、黄道が西側で昇り ASC が西半分に来ることがあります';
+  }
+  const key=cls+'|'+tx;
+  if(key!==lastNote){ el.className=cls; el.textContent=tx; lastNote=key; }
+}
+/** 解釈テキストの取得。既定のプロバイダは空を返すので、通常は「未接続」の表示になる。
+    毎フレームは呼ばない（時刻を動かしている間は取りに行かない） */
+async function refreshInterp(){
+  if(!astroOn||!showInterp||!chart){ interpTexts={}; uiDirty=true; return; }
+  const set=BODY_SETS.find(s=>s.k===aspectSet);
+  interpTexts=await interpret(interpretationKeys({
+    chart, houses, aspects, bodies:(set?set.keys:BODIES.map(b=>b.k))
+  }));
+  uiDirty=true;
 }
 
 /* --- 軌跡（逆行区間を色分け） ---
@@ -703,6 +913,25 @@ function buildReadout(){
     el.appendChild(row);
     rowRefs[b.k]={row,sg:row.querySelector('.sg'),last:null};
   });
+  // 感受点（ASC/MC）。占星術レイヤーがオフの間は行ごと出さない
+  const head=document.createElement('div');
+  head.className='rd-head'; head.textContent='感受点'; head.id='rdAngHead';
+  el.appendChild(head); angRefs.head=head;
+  [['asc','ASC'],['mc','MC']].forEach(([k,n])=>{
+    const row=document.createElement('div');
+    row.className='body-row'; row.style.cursor='default';
+    row.innerHTML=`<div class="dot" style="background:#a595d6;color:#a595d6"></div>
+      <div class="nm">${n}</div><div class="sg rd-ang"></div>`;
+    el.appendChild(row);
+    angRefs[k]={row,sg:row.querySelector('.sg'),last:null};
+  });
+  showAngRows();
+}
+const angRefs={};
+function showAngRows(){
+  const on=astroOn?'':'none';
+  angRefs.head.style.display=astroOn?'':'none';
+  angRefs.asc.row.style.display=on; angRefs.mc.row.style.display=on;
 }
 function updateReadout(){
   if(!chart) return;
@@ -716,6 +945,13 @@ function updateReadout(){
       +(showTrails&&trailAliased(b)?'<i class="nt" title="このスケールでは軌跡を描けない">⌁</i>':'');
     if(html!==r.last){ r.sg.innerHTML=html; r.last=html; }
   });
+  if(astroOn&&houses){
+    for(const k of ['asc','mc']){
+      const lon=houses[k], si=Math.floor(lon/30), r=angRefs[k];
+      const html=`${SIGNS[si]}<em> ${(lon-si*30).toFixed(1).padStart(4,'0')}°</em>`;
+      if(html!==r.last){ r.sg.innerHTML=html; r.last=html; }
+    }
+  }
 }
 function updateCard(){
   const card=document.getElementById('card');
@@ -737,6 +973,40 @@ function updateCard(){
     const d=deltaLon(natalChart[focusKey].lon,p.lon);
     cdNatal.textContent=(d<0?'−':'+')+Math.abs(d).toFixed(2)+'°';
   }else cdNatal.textContent='—';
+  updateAstroCard(p);
+}
+/** カードの占星術ぶん（ハウス・その天体に効いているアスペクト・解釈テキスト） */
+function updateAstroCard(p){
+  const show=astroOn&&!!houses;
+  cdHouseK.hidden=cdHouse.hidden=!show;
+  if(show){
+    const h=houseOf(p.lon,houses.cusps);
+    const m=HOUSE_METHODS.find(x=>x.k===houses.method);
+    cdHouse.textContent=`第${h}ハウス（${m.n}${houses.fallback?'・代替':''}）`;
+    const mine=aspects.filter(a=>a.a===focusKey||a.b===focusKey);
+    const tx=mine.slice(0,5).map(a=>{
+      const other=a.a===focusKey?a.b:a.a;
+      const nm=BODIES.find(b=>b.k===other).n;
+      const ap=a.applying===null?'':(a.applying?' 接':' 離');
+      return `${a.sym} ${nm} ${a.orbAbs.toFixed(1)}°${ap}`;
+    }).join('<br>');
+    cdAspK.hidden=cdAsp.hidden=!mine.length;
+    if(mine.length) cdAsp.innerHTML=tx+(mine.length>5?`<br>ほか${mine.length-5}`:'');
+  }else{ cdAspK.hidden=cdAsp.hidden=true; }
+  // 解釈テキストは外部データ。既定のスタブでは何も返らないので、その旨を出す
+  const box=document.getElementById('cdInterp');
+  if(!astroOn||!showInterp){ box.hidden=true; return; }
+  box.hidden=false;
+  const keys=[`body/${focusKey}/sign/${signKey(p.lon)}`];
+  if(houses) keys.push(`body/${focusKey}/house/${houseOf(p.lon,houses.cusps)}`);
+  const got=keys.map(k=>interpTexts[k]).filter(Boolean);
+  if(got.length){ box.className=''; box.innerHTML=got.join('<br>'); }
+  else{
+    box.className='none';
+    box.textContent=hasInterpreter()
+      ? 'この配置の解釈テキストは提供されていません'
+      : '解釈テキストは同梱していません（外部データを接続すると表示されます）';
+  }
 }
 function setFocus(k){
   focusKey = focusKey===k?null:k;
@@ -792,7 +1062,9 @@ function applyTime(snap){
   applyPrecession(chart._T);                           // 歳差は時刻に追従する
   const r=lonRates(curJdUT,RATE_DT,latDeg,lonDeg);
   BODIES.forEach(b=>{ retro[b.k]=r[b.k]<0; });
+  lastRates=r;                                         // 接近／分離の判定にそのまま使う
   placeBodies(snap);
+  if(astroOn) updateAstro();                           // オフなら計算ごと起きない
   refreshHorizon();
   syncTimeUI();
   uiDirty=true;
@@ -879,6 +1151,7 @@ function run(){
   lastTrailJdUT=null;
   focusKey=null; document.getElementById('card').classList.remove('show');
   BODIES.forEach(b=>rowRefs[b.k].row.classList.remove('on'));
+  if(astroOn) refreshInterp();      // 解釈は出生データの確定時にだけ取りに行く
   showTzInfo(z);
   document.getElementById('stamp').innerHTML =
     `${dv.replace(/-/g,'.')} ${tv} <span class="off">${formatOffset(z.offsetSeconds)}</span>`
@@ -1007,6 +1280,34 @@ toggle('tTrail',v=>{showTrails=v;uiDirty=true;});   // ⌁ 印の出し入れを
 zodiacGroup.children.forEach(c=>{if(c.material) c.userData.base=c.material.opacity;});
 toggle('tReal',v=>{realGroup.visible=v;zodiacGroup.children.forEach(c=>{
   if(c.material) c.material.opacity = c.userData.base*(v?0.4:1);});});
+
+/* --- 占星術レイヤーのUI ---
+   既定オフ。オンにしたときだけ方式・オーブ・解釈の操作列が現れる */
+const elAstroPanel=document.getElementById('astroPanel');
+toggle('tAstro',v=>{
+  astroOn=v;
+  astroGroup.visible=v;
+  elAstroPanel.hidden=!v;
+  showAngRows();
+  if(v){ updateAstro(); refreshInterp(); }
+  else { houses=null; aspects=[]; }
+  uiDirty=true;
+});
+document.getElementById('hsMethod').onchange=e=>{
+  houseMethod=e.target.value;
+  if(astroOn){ updateAstro(); refreshInterp(); }
+};
+document.getElementById('aspSet').onchange=e=>{
+  aspectSet=e.target.value;
+  if(astroOn){ updateAstro(); refreshInterp(); }
+};
+const elOrb=document.getElementById('orb');
+elOrb.oninput=()=>{
+  orbScale=+elOrb.value;
+  document.getElementById('orbTx').textContent='×'+orbScale.toFixed(1);
+  if(astroOn) updateAstro();
+};
+toggle('tInterp',v=>{ showInterp=v; refreshInterp(); });
 
 /* --- カメラ操作 --- */
 let drag=false,px=0,py=0,pd=0;
