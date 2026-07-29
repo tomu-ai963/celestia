@@ -17,10 +17,18 @@
  * ■ 位置の種別
  * 出力は astrometric（光行時間補正あり・年周光行差なし・章動なし）。
  * Horizons の VEC_CORR='LT' と同じ定義で、突き合わせはこの条件で行う。
+ *
+ * ■ 時系（P3.5 で導入）
+ * このモジュールの **入口の JD はすべて UT**（暦日から作るのが UT なので）。
+ * 軌道理論の引数 T は力学時なので computeChart が中で TT へ直す。
+ * 逆に GMST は UT の関数として定義された量なので UT のまま渡す。
+ * 混同すると地平線が 0.27° 回るため、変数名を jdUT / jdTT で必ず分けること。
+ * 詳細と根拠は src/deltat.mjs の冒頭。
  */
 import { toJ2000Lon, precessVec, precessVecInv } from './precession.mjs';
 import { moonPos } from './moon.mjs';
 import { nutation, meanObliquity } from './nutation.mjs';
+import { utToTT } from './deltat.mjs';
 
 export const D2R = Math.PI / 180, R2D = 180 / Math.PI, AU = 149597870.7;
 /** 光が 1 AU を進むのに要する日数（IAU 2009 の光行時間 499.004784 s より） */
@@ -180,8 +188,28 @@ export function geoVecLT(name, T, E, iters = 2) {
   return { x: p.x - E.x, y: p.y - E.y, z: p.z - E.z, tau };
 }
 
-export function computeChart(jd, latDeg, lonDeg) {
-  const T=(jd-2451545.0)/36525;
+/**
+ * グリニッジ平均恒星時（度）。**引数は必ず UT のユリウス日**。
+ *
+ * GMST は「UT1 の関数」として定義された量そのもの（IAU 1982 の式）で、
+ * 地球が実際にどれだけ回ったかを表す。ここに TT を渡すと ΔT 秒ぶん未来の
+ * 自転角になり、2000年なら 64秒 × 15.041″/秒 ≒ 963″ = 0.27° 地平線が回る。
+ * 軌道理論側（TT）と取り違えないよう関数として切り出してある。
+ */
+export function gmstDeg(jdUT) {
+  const Tu = (jdUT - 2451545.0) / 36525;
+  return norm(280.46061837 + 360.98564736629 * (jdUT - 2451545.0) + 0.000387933 * Tu * Tu);
+}
+
+/**
+ * 出生図の全天体位置。**jdUT は UT のユリウス日**（`julianDay` / `zonedToJd` の出力）。
+ *
+ * 中で TT へ直したものだけを軌道理論と歳差に渡し、GMST には UT をそのまま渡す。
+ * 返り値の `_T` は TT 基準のユリウス世紀（歳差行列・章動の引数として使う）。
+ */
+export function computeChart(jdUT, latDeg, lonDeg) {
+  const jdTT = utToTT(jdUT);
+  const T=(jdTT-2451545.0)/36525;      // 力学時のユリウス世紀（軌道理論・歳差の引数）
   const out={};
   // 月は of-date で出てくるので歳差をかけない
   const m=moonPos(T); out.moon={lon:m.lon,lat:m.lat,dist:m.dist,x:m.x,y:m.y,z:m.z};
@@ -195,9 +223,8 @@ export function computeChart(jd, latDeg, lonDeg) {
   const lilLon =norm(83.3532465+4069.0137287*T);
   out.node  =fromLon(nodeLon, 0.0026);
   out.lilith=fromLon(lilLon , 0.0026);
-  // 地方恒星時 → 天頂ベクトル
-  const gmst=norm(280.46061837+360.98564736629*(jd-2451545.0)+0.000387933*T*T);
-  const lst=norm(gmst+lonDeg);
+  // 地方恒星時 → 天頂ベクトル。**ここだけ UT**（gmstDeg の注記を参照）
+  const lst=norm(gmstDeg(jdUT)+lonDeg);
   const eps=meanObliquity(T);
   const cx=cos(latDeg)*cos(lst), cy=cos(latDeg)*sin(lst), cz=sin(latDeg);
   out._zenith={x:cx, y:cy*cos(eps)+cz*sin(eps), z:-cy*sin(eps)+cz*cos(eps)};
@@ -258,9 +285,9 @@ export function toApparent(vecOfDate, T) {
  * 逆に言えば、フレームを取り違えていれば 1.4° 級のずれが出るので、
  * この関数が 0 を返すことは of-date であることの十分に鋭い検査になる。
  */
-export function apparentSunLon(jd) {
-  const T = (jd - 2451545.0) / 36525;
-  const c = computeChart(jd, 0, 0);
+export function apparentSunLon(jdUT) {
+  const T = (utToTT(jdUT) - 2451545.0) / 36525;   // 章動の引数も力学時
+  const c = computeChart(jdUT, 0, 0);
   const aberr = -20.4898 / c.sun.dist / 3600;
   return norm(c.sun.lon + nutation(T).dpsi + aberr);
 }
@@ -278,24 +305,24 @@ export function deltaLon(a, b) {
   return ((b - a + 540) % 360) - 180;
 }
 
-/** 各天体の黄経速度（度/日）。中心差分なので computeChart は2回で済む */
-export function lonRates(jd, dt = 0.5, latDeg = 0, lonDeg = 0) {
-  const a = computeChart(jd - dt, latDeg, lonDeg);
-  const b = computeChart(jd + dt, latDeg, lonDeg);
+/** 各天体の黄経速度（度/日）。中心差分なので computeChart は2回で済む（jdUT は UT） */
+export function lonRates(jdUT, dt = 0.5, latDeg = 0, lonDeg = 0) {
+  const a = computeChart(jdUT - dt, latDeg, lonDeg);
+  const b = computeChart(jdUT + dt, latDeg, lonDeg);
   const out = {};
   for (const bd of BODIES) out[bd.k] = deltaLon(a[bd.k].lon, b[bd.k].lon) / (2 * dt);
   return out;
 }
 
-/** 指定天体が jd 時点で逆行しているか */
-export function isRetrograde(key, jd, dt = 0.5) {
-  return lonRates(jd, dt)[key] < 0;
+/** 指定天体が jdUT 時点で逆行しているか */
+export function isRetrograde(key, jdUT, dt = 0.5) {
+  return lonRates(jdUT, dt)[key] < 0;
 }
 
 /**
- * [jd0, jd1] の区間で key の留（順行⇄逆行の切り替わり）を列挙する。
+ * [jd0, jd1] の区間（UT）で key の留（順行⇄逆行の切り替わり）を列挙する。
  * 粗いスキャンで符号反転を見つけ、二分法で細分する。
- * 戻り値: [{ jd, toRetro }]  toRetro=true なら逆行入り（留→逆行）
+ * 戻り値: [{ jd, toRetro }]（jd は UT）  toRetro=true なら逆行入り（留→逆行）
  */
 export function findStations(key, jd0, jd1, coarse = 1) {
   const rate = j => lonRates(j)[key];

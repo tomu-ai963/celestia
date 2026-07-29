@@ -649,7 +649,7 @@ BODIES.forEach(b=>{
   o.frustumCulled=false; o.visible=false;
   trailGroup.add(o); trails[b.k]=o;
 });
-let lastTrailJD=null, lastTrailKey='';
+let lastTrailJdUT=null, lastTrailKey='';
 /* サンプル間隔より速く動く天体は折り返しを拾えない（エイリアス）ので軌跡を描かない。
    スケールだけで決まり時刻には依らないので、読み出しパネルもこの判定を共有する */
 function trailAliased(b){ return b.mo*(SCALES[scale].trail/(TRAIL_N-1))>30; }
@@ -657,8 +657,8 @@ function rebuildTrails(){
   const win=SCALES[scale].trail, step=win/(TRAIL_N-1);
   const samples=new Array(TRAIL_N);
   for(let i=0;i<TRAIL_N;i++){
-    const jd=Math.max(JD_MIN,Math.min(JD_MAX, curJD-win+step*i));
-    samples[i]=computeChart(jd,latDeg,lonDeg);
+    const jdUT=Math.max(JD_MIN_UT,Math.min(JD_MAX_UT, curJdUT-win+step*i));
+    samples[i]=computeChart(jdUT,latDeg,lonDeg);
   }
   BODIES.forEach(b=>{
     const o=trails[b.k];
@@ -685,7 +685,7 @@ function rebuildTrails(){
     o.geometry.attributes.color.needsUpdate=true;
     o.visible=true;
   });
-  lastTrailJD=curJD; lastTrailKey=scale+'|'+useDist;
+  lastTrailJdUT=curJdUT; lastTrailKey=scale+'|'+useDist;
 }
 
 /* --- 読み出しパネル（毎フレームの DOM 更新を避け、変化した行だけ書き換える） --- */
@@ -747,8 +747,11 @@ function setFocus(k){
 /* ============================================================
    4. 時間軸
    ============================================================ */
-// 端は 12:00 UT に置く。どのタイムゾーンで表示しても暦年が 1800–2050 に収まるようにするため
-const JD_MIN=julianDay(1800,1,1,12,0,0), JD_MAX=julianDay(2050,12,31,12,0,0);
+/* このファイルが扱うユリウス日は **すべて UT**（暦日と Intl から作るので当然 UT になる）。
+   軌道理論に要る力学時 TT への変換は computeChart の中だけで起きる。
+   取り違えの影響は非対称で、GMST に TT を渡すと地平線が 0.27° 回る（src/deltat.mjs 参照）。
+   端は 12:00 UT に置く。どのタイムゾーンで表示しても暦年が 1800–2050 に収まるようにするため */
+const JD_MIN_UT=julianDay(1800,1,1,12,0,0), JD_MAX_UT=julianDay(2050,12,31,12,0,0);
 // half: スライダー窓の半幅（日）, rate: 再生の基準速度（日/秒）, trail: 軌跡の保持期間（日）
 const SCALES={
   hour :{half:1,     rate:1/24,   trail:2},
@@ -763,17 +766,17 @@ const SPEEDS=[-64,-16,-4,-1,1,4,16,64];
    逆行かどうかは「その瞬間の天体の性質」であって、こちらの再生の都合とは無関係 */
 const RATE_DT=0.5;
 let scale='hour', speedIdx=4, playing=false;
-let natalJD=0, curJD=0, winCenter=0, edgeHit=null, scrubbing=false, uiDirty=true;
+let natalJdUT=0, curJdUT=0, winCenter=0, edgeHit=null, scrubbing=false, uiDirty=true;
 
 const elPlay=document.getElementById('tPlay'), elSpeed=document.getElementById('tSpeed'),
       elSlide=document.getElementById('tslide'), elNow=document.getElementById('tnow');
 
 function winRange(){
   const h=SCALES[scale].half;
-  if(2*h>=JD_MAX-JD_MIN) return [JD_MIN,JD_MAX];
+  if(2*h>=JD_MAX_UT-JD_MIN_UT) return [JD_MIN_UT,JD_MAX_UT];
   let lo=winCenter-h, hi=winCenter+h;
-  if(lo<JD_MIN){ hi+=JD_MIN-lo; lo=JD_MIN; }
-  if(hi>JD_MAX){ lo-=hi-JD_MAX; hi=JD_MAX; }
+  if(lo<JD_MIN_UT){ hi+=JD_MIN_UT-lo; lo=JD_MIN_UT; }
+  if(hi>JD_MAX_UT){ lo-=hi-JD_MAX_UT; hi=JD_MAX_UT; }
   return [lo,hi];
 }
 function followHorizon(){ return scale==='hour'||scale==='day'; }
@@ -785,21 +788,21 @@ function refreshHorizon(){
   document.getElementById('tHorizTx').textContent=followHorizon()?'地平線':'地平線（出生時）';
 }
 function applyTime(snap){
-  chart=computeChart(curJD,latDeg,lonDeg);
+  chart=computeChart(curJdUT,latDeg,lonDeg);
   applyPrecession(chart._T);                           // 歳差は時刻に追従する
-  const r=lonRates(curJD,RATE_DT,latDeg,lonDeg);
+  const r=lonRates(curJdUT,RATE_DT,latDeg,lonDeg);
   BODIES.forEach(b=>{ retro[b.k]=r[b.k]<0; });
   placeBodies(snap);
   refreshHorizon();
   syncTimeUI();
   uiDirty=true;
 }
-function setTime(jd,snap){
-  edgeHit = jd<JD_MIN?'min' : jd>JD_MAX?'max' : null;
+function setTime(jdUT,snap){
+  edgeHit = jdUT<JD_MIN_UT?'min' : jdUT>JD_MAX_UT?'max' : null;
   if(edgeHit&&playing) setPlaying(false);
-  curJD=Math.max(JD_MIN,Math.min(JD_MAX,jd));
+  curJdUT=Math.max(JD_MIN_UT,Math.min(JD_MAX_UT,jdUT));
   const [lo,hi]=winRange();
-  if(curJD<lo-1e-9||curJD>hi+1e-9) winCenter=curJD;
+  if(curJdUT<lo-1e-9||curJdUT>hi+1e-9) winCenter=curJdUT;
   applyTime(snap);
 }
 function setPlaying(v){
@@ -815,11 +818,11 @@ function fmtSpan(a){
 }
 function syncTimeUI(){
   const [lo,hi]=winRange();
-  if(!scrubbing) elSlide.value=String(hi>lo?(curJD-lo)/(hi-lo):0.5);
+  if(!scrubbing) elSlide.value=String(hi>lo?(curJdUT-lo)/(hi-lo):0.5);
   // 表示は現地時刻。オフセットは**その時点で**引き直す（時間軸が夏時間の境界を
   // またぐと表示が1時間跳ぶ。固定オフセットだったP2では起きなかった正しい挙動）
-  const u=jdToZoned(tzId,curJD), p=n=>String(n).padStart(2,'0');
-  const off=curJD-natalJD;
+  const u=jdToZoned(tzId,curJdUT), p=n=>String(n).padStart(2,'0');
+  const off=curJdUT-natalJdUT;
   let html=`${u.y}.${p(u.m)}.${p(u.d)} ${p(u.h)}:${p(u.mi)}`;
   html += Math.abs(off)<1e-6 ? ' <span class="off">出生時</span>'
         : ` <span class="off">${off<0?'−':'+'}${fmtSpan(Math.abs(off))}</span>`;
@@ -833,14 +836,14 @@ document.getElementById('tFaster').onclick=()=>{
 document.getElementById('tSlower').onclick=()=>{
   speedIdx=Math.max(0,speedIdx-1); syncTimeUI(); };
 document.getElementById('tHome').onclick=()=>{
-  setPlaying(false); winCenter=natalJD; setTime(natalJD,true); };
+  setPlaying(false); winCenter=natalJdUT; setTime(natalJdUT,true); };
 document.querySelectorAll('#scales .tb').forEach(btn=>{
   btn.onclick=()=>{
     document.querySelectorAll('#scales .tb').forEach(x=>x.classList.remove('on'));
     btn.classList.add('on');
     scale=btn.dataset.s;
-    winCenter=curJD;                 // 窓を現在時刻に寄せ直す
-    lastTrailJD=null;
+    winCenter=curJdUT;                 // 窓を現在時刻に寄せ直す
+    lastTrailJdUT=null;
     applyTime(true);
   };
 });
@@ -867,19 +870,19 @@ function run(){
   latDeg=la; lonDeg=lo; tzId=tz;
   // 固定オフセットではなく IANA ゾーンで換算するので、夏時間期間の出生時刻も合う
   const z=zonedToJd(tz,Y,M,D,h,mi);
-  natalJD=Math.max(JD_MIN,Math.min(JD_MAX,z.jd));
-  natalChart=computeChart(natalJD,latDeg,lonDeg);
-  winCenter=natalJD; edgeHit=null;
+  natalJdUT=Math.max(JD_MIN_UT,Math.min(JD_MAX_UT,z.jd));
+  natalChart=computeChart(natalJdUT,latDeg,lonDeg);
+  winCenter=natalJdUT; edgeHit=null;
   setPlaying(false);
-  setTime(natalJD,true);
+  setTime(natalJdUT,true);
   placeNatal();
-  lastTrailJD=null;
+  lastTrailJdUT=null;
   focusKey=null; document.getElementById('card').classList.remove('show');
   BODIES.forEach(b=>rowRefs[b.k].row.classList.remove('on'));
   showTzInfo(z);
   document.getElementById('stamp').innerHTML =
     `${dv.replace(/-/g,'.')} ${tv} <span class="off">${formatOffset(z.offsetSeconds)}</span>`
-    +`<br>${la.toFixed(2)}° ${lo.toFixed(2)}°<br>JD ${natalJD.toFixed(4)}`;
+    +`<br>${la.toFixed(2)}° ${lo.toFixed(2)}°<br>JD(UT) ${natalJdUT.toFixed(4)}`;
   tR=useDist?430:300;
 }
 
@@ -923,7 +926,7 @@ const PLACES=[
     const o=document.createElement('option'); o.value=z; o.textContent=z; elTz.appendChild(o);
   }
   elTz.value='Asia/Tokyo';
-  elTz.onchange=()=>{ if(natalJD) run(); };
+  elTz.onchange=()=>{ if(natalJdUT) run(); };
 })();
 
 /* プリセットと検索結果を同じ select に載せる。検索結果は先頭のグループへ積む */
@@ -948,7 +951,7 @@ elPlace.onchange=()=>{
     elLat.value=r.lat.toFixed(4); elLon.value=r.lon.toFixed(4);
     if(r.timezone&&isValidZone(r.timezone)) elTz.value=r.timezone;
   }
-  if(natalJD) run();
+  if(natalJdUT) run();
 };
 
 /* --- 出生地の検索（Open-Meteo / キー不要）---
@@ -998,7 +1001,7 @@ function toggle(id,fn){
   const el=document.getElementById(id);
   el.onclick=()=>{el.classList.toggle('on');fn(el.classList.contains('on'));};
 }
-toggle('tDist',v=>{useDist=v;placeBodies(false);placeNatal();lastTrailJD=null;tR=v?430:300;});
+toggle('tDist',v=>{useDist=v;placeBodies(false);placeNatal();lastTrailJdUT=null;tR=v?430:300;});
 toggle('tHoriz',v=>{horizGroup.visible=v;});
 toggle('tTrail',v=>{showTrails=v;uiDirty=true;});   // ⌁ 印の出し入れを読み出しに反映
 zodiacGroup.children.forEach(c=>{if(c.material) c.userData.base=c.material.opacity;});
@@ -1046,7 +1049,7 @@ let t0=performance.now(), uiAcc=0;
   const now=performance.now(), dt=(now-t0)/1000; t0=now;
 
   // 再生（1フレームあたり computeChart 3回 ≒ 59µs）
-  if(playing) setTime(curJD + SCALES[scale].rate*SPEEDS[speedIdx]*dt, true);
+  if(playing) setTime(curJdUT + SCALES[scale].rate*SPEEDS[speedIdx]*dt, true);
 
   // 軌跡: 毎フレームだと 2.2ms 取られるので、窓の 1/220 動いたときだけ作り直す。
   // prefers-reduced-motion では再生中は動かさず、止まってから描く
@@ -1054,10 +1057,10 @@ let t0=performance.now(), uiAcc=0;
   trailGroup.visible = showTrails && !trailPaused;
   if(showTrails && chart && !trailPaused){
     const key=scale+'|'+useDist;
-    if(key!==lastTrailKey || lastTrailJD===null ||
-       Math.abs(curJD-lastTrailJD)>SCALES[scale].trail/220) rebuildTrails();
+    if(key!==lastTrailKey || lastTrailJdUT===null ||
+       Math.abs(curJdUT-lastTrailJdUT)>SCALES[scale].trail/220) rebuildTrails();
   }
-  natalGroup.visible = !!natalChart && Math.abs(curJD-natalJD)>0.02;
+  natalGroup.visible = !!natalChart && Math.abs(curJdUT-natalJdUT)>0.02;
 
   // 読み出しパネルの DOM 更新は 8Hz に間引く
   uiAcc+=dt;

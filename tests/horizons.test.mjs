@@ -23,6 +23,13 @@
  *   https://ssd.jpl.nasa.gov/planets/approx_pos.html ）とも整合する。
  * したがって木星・土星・天王星は ±1′ に入らない。これはモデルの上限であって
  * バグではないので、閾値を天体ごとに分けて実測値で固定してある。
+ *
+ * ■ 時系（P3.5）
+ * フィクスチャの JD は **TDB**（apparent.csv は TT。両者の差は 2ms）。
+ * 一方 computeChart の入口は **UT** なので、比較の前に ttToUT() で戻す。
+ * ここを省くと ΔT ぶん（2000年で 64秒）ずれた瞬間と比べることになり、
+ * 月に 35″ の見かけの残差が乗って P3 で測った値と変わってしまう。
+ * 歳差変換に使う T はフィクスチャの JD（力学時）からそのまま作る。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,6 +38,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { computeChart, toApparent } from '../src/astro.mjs';
 import { precessEcl } from '../src/precession.mjs';
+import { ttToUT } from '../src/deltat.mjs';
 
 const DIR = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'horizons');
 const R2D = 180 / Math.PI, D2R = Math.PI / 180;
@@ -70,13 +78,13 @@ test('Horizons astrometric との離角（許容 ±1′、外惑星3天体は近
   const rows = readCsv('vectors.csv');
   const per = {};
   for (const [body, jdS, xS, yS, zS] of rows) {
-    const jd = +jdS, x = +xS, y = +yS, z = +zS;
+    const jd = +jdS, x = +xS, y = +yS, z = +zS;   // jd は TDB
     const T = (jd - 2451545.0) / 36525;
     // Horizons の J2000 黄道ベクトル → 角度 → of-date
     const ref = precessEcl(
       norm(Math.atan2(y, x) * R2D),
       Math.asin(z / Math.hypot(x, y, z)) * R2D, T);
-    const got = computeChart(jd, 0, 0)[body];
+    const got = computeChart(ttToUT(jd), 0, 0)[body];
     (per[body] ??= []).push({
       year: yearOf(jd),
       sep: sepArcsec(got, ref),
@@ -116,7 +124,7 @@ test('±1′ を満たす天体と満たさない天体の内訳が変わって�
     const T = (jd - 2451545.0) / 36525;
     const ref = precessEcl(norm(Math.atan2(y, x) * R2D),
       Math.asin(z / Math.hypot(x, y, z)) * R2D, T);
-    const s = sepArcsec(computeChart(jd, 0, 0)[body], ref);
+    const s = sepArcsec(computeChart(ttToUT(jd), 0, 0)[body], ref);
     worst[body] = Math.max(worst[body] ?? 0, s);
   }
   const over = Object.entries(worst).filter(([, s]) => s > 60).map(([b]) => b).sort();
@@ -133,8 +141,8 @@ test('of-date フレームの健全性 — Horizons apparent と 60″ 以内', 
   const rows = readCsv('apparent.csv');
   let worstBody = null, worstSep = 0;
   for (const [body, jdS, lonS, latS] of rows) {
-    const jd = +jdS, T = (jd - 2451545.0) / 36525;
-    const got = toApparent(computeChart(jd, 0, 0)[body], T);
+    const jd = +jdS, T = (jd - 2451545.0) / 36525;   // jd は TT
+    const got = toApparent(computeChart(ttToUT(jd), 0, 0)[body], T);
     const sep = sepArcsec(got, { lon: +lonS, lat: +latS });
     assert.ok(sep < TOLERANCE[body] + 5,
       `${body} ${yearOf(jd)}年: apparent との離角 ${sep.toFixed(1)}″`);
