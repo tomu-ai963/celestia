@@ -7,11 +7,13 @@
     "build:constellations": "node tools/build-constellations.mjs",
     "build": "node tools/build-stars.mjs && node tools/build-constellations.mjs",
     "build:icons": "node scripts/build-icons.mjs",
+    "gen:logotype": "node scripts/gen-logotype.mjs",
     "test": "node --test",
     "fetch:horizons": "node tools/fetch-horizons.mjs",
     "serve": "npx -y serve -l 8000 ."
   },
   "devDependencies": {
-    "@resvg/resvg-js": "^2.6.2"
+    "@resvg/resvg-js": "^2.6.2",
+    "opentype.js": "^2.0.0"
   }
 }

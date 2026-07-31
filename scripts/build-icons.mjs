@@ -2,6 +2,10 @@
 // assets/icons/*.svg から PNG / ICO を生成する。
 //   npm run build:icons
 // 依存: @resvg/resvg-js（SVG ラスタライズ）。ICO は本ファイル内で組み立てる。
+//
+// og-image のロゴタイプは logotype.svg（scripts/gen-logotype.mjs が生成する
+// アウトライン済み path）を参照するため、本スクリプトはフォント環境に依存しない
+// （loadSystemFonts も無効）。ロゴタイプの字形を変えたいときだけ gen-logotype.mjs を再実行する。
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -11,53 +15,52 @@ import { Resvg } from '@resvg/resvg-js';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const iconDir = path.join(root, 'assets', 'icons');
 
-// og-image のみテキストを含む。フォントが無い環境でも落ちないよう、
-// 一般的な serif を順に候補として渡す。
-const FONT = {
-  loadSystemFonts: true,
-  defaultFontFamily: 'Georgia',
-  serifFamily: 'Georgia',
-};
+// すべての描画は path 化済み。フォント解決を完全に無効化して環境非依存にする。
+const FONT = { loadSystemFonts: false };
 
-/** SVG を指定幅でラスタライズして PNG バッファを返す。 */
-async function render(svgPath, width) {
-  const svg = await readFile(svgPath);
+/** SVG 文字列を指定幅でラスタライズして PNG バッファを返す。 */
+function render(svg, width) {
   const resvg = new Resvg(svg, {
     fitTo: { mode: 'width', value: width },
     font: FONT,
     shapeRendering: 2, // geometricPrecision
     imageRendering: 0, // optimizeQuality
   });
-  return resvg.render().asPng();
+  return resvg.render();
 }
 
-/** 文字列として渡した SVG を指定幅でラスタライズする。 */
-function renderString(svg, width) {
-  return new Resvg(svg, {
-    fitTo: { mode: 'width', value: width },
-    font: FONT,
-    shapeRendering: 2,
-  })
-    .render()
-    .asPng();
-}
+const renderPng = (svg, width) => render(svg, width).asPng();
 
-// OG 画像は icon.svg を入れ子 <svg> として取り込み、ロゴタイプを添えて組む。
-// （幾何を二重管理しないための合成。編集は icon.svg 側で行う）
+// OG 画像は icon.svg と logotype.svg を入れ子 <svg> として取り込んで組む。
+// （幾何・字形を二重管理しないための合成。編集は各ソース側で行う）
 const OG = { w: 1200, h: 630 };
-function composeOg(iconSvg) {
+function composeOg(iconSvg, logotypeSvg) {
   const icon = iconSvg.replace(
     /<svg[^>]*>/,
     '<svg x="440" y="96" width="320" height="320" viewBox="0 0 512 512">',
   );
-  // letter-spacing は末尾の 1 字分も送るため、中央寄せの基準を半分だけ右へ戻す。
-  const tracking = 104 * 0.42;
+  const logotype = logotypeSvg.replace(
+    /<svg[^>]*>/,
+    `<svg x="0" y="0" width="${OG.w}" height="${OG.h}" viewBox="0 0 ${OG.w} ${OG.h}">`,
+  );
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${OG.w} ${OG.h}" width="${OG.w}" height="${OG.h}">
   <path d="M0 0H${OG.w}V${OG.h}H0Z" fill="#ffffff"/>
   ${icon}
-  <text x="${(OG.w + tracking) / 2}" y="520" text-anchor="middle" fill="#C9A227"
-        font-family="Cormorant Garamond, Georgia, Times New Roman, serif"
-        font-size="104" font-weight="300" letter-spacing="${tracking}">celestia</text>
+  ${logotype}
+</svg>`;
+}
+
+// maskable 用: 全面白ベタの上に icon.svg の中身を中心基準で縮小して置く。
+// icon.svg のインク最遠点は右上の星の上端 (349,69) で中心から 208.9px。
+// セーフゾーン（直径 80% = 半径 204.8px/512）に収めるには scale <= 0.980 だが、
+// 余白を見て 0.96（→ 実測は build 時に検証スクリプトで確認）。
+const MASKABLE_SCALE = 0.96;
+function composeMaskable(iconSvg) {
+  const inner = iconSvg.replace(/<svg[^>]*>/, '').replace('</svg>', '');
+  const c = 256 * (1 - MASKABLE_SCALE);
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <path d="M0 0H512V512H0Z" fill="#ffffff"/>
+  <g transform="translate(${c} ${c}) scale(${MASKABLE_SCALE})">${inner}</g>
 </svg>`;
 }
 
@@ -87,35 +90,31 @@ function buildIco(pngs) {
   return Buffer.concat([header, entries, ...pngs.map((p) => p.data)]);
 }
 
-const PNG_TARGETS = [
-  { src: 'icon.svg', out: 'apple-touch-icon.png', width: 180 },
-  { src: 'icon.svg', out: 'icon-192.png', width: 192 },
-  { src: 'icon.svg', out: 'icon-512.png', width: 512 },
-];
-
 const ICO_SIZES = [16, 32, 48];
 
 async function main() {
   await mkdir(iconDir, { recursive: true });
+  const iconSvg = await readFile(path.join(iconDir, 'icon.svg'), 'utf8');
+  const simpleSvg = await readFile(path.join(iconDir, 'icon-simple.svg'), 'utf8');
+  const logotypeSvg = await readFile(path.join(iconDir, 'logotype.svg'), 'utf8');
 
-  for (const { src, out, width } of PNG_TARGETS) {
-    const png = await render(path.join(iconDir, src), width);
-    await writeFile(path.join(iconDir, out), png);
-    console.log(`  ${out.padEnd(22)} ${width}px  ${(png.length / 1024).toFixed(1)} KB`);
-  }
+  const emit = async (name, png, note) => {
+    await writeFile(path.join(iconDir, name), png);
+    console.log(`  ${name.padEnd(24)} ${note}  ${(png.length / 1024).toFixed(1)} KB`);
+  };
 
-  const og = renderString(composeOg(await readFile(path.join(iconDir, 'icon.svg'), 'utf8')), OG.w);
-  await writeFile(path.join(iconDir, 'og-image.png'), og);
-  console.log(`  ${'og-image.png'.padEnd(22)} ${OG.w}x${OG.h}  ${(og.length / 1024).toFixed(1)} KB`);
+  await emit('apple-touch-icon.png', renderPng(iconSvg, 180), '180px');
+  await emit('icon-192.png', renderPng(iconSvg, 192), '192px');
+  await emit('icon-512.png', renderPng(iconSvg, 512), '512px');
 
-  const simple = path.join(iconDir, 'icon-simple.svg');
-  const pngs = [];
-  for (const size of ICO_SIZES) {
-    pngs.push({ size, data: await render(simple, size) });
-  }
-  const ico = buildIco(pngs);
-  await writeFile(path.join(iconDir, 'favicon.ico'), ico);
-  console.log(`  ${'favicon.ico'.padEnd(22)} ${ICO_SIZES.join('/')}px  ${(ico.length / 1024).toFixed(1)} KB`);
+  const maskableSvg = composeMaskable(iconSvg);
+  await emit('icon-192-maskable.png', renderPng(maskableSvg, 192), '192px');
+  await emit('icon-512-maskable.png', renderPng(maskableSvg, 512), '512px');
+
+  await emit('og-image.png', renderPng(composeOg(iconSvg, logotypeSvg), OG.w), `${OG.w}x${OG.h}`);
+
+  const pngs = ICO_SIZES.map((size) => ({ size, data: renderPng(simpleSvg, size) }));
+  await emit('favicon.ico', buildIco(pngs), `${ICO_SIZES.join('/')}px`);
 }
 
 main().catch((err) => {
