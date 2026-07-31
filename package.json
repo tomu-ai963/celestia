@@ -6,8 +6,12 @@
     "build:stars": "node tools/build-stars.mjs",
     "build:constellations": "node tools/build-constellations.mjs",
     "build": "node tools/build-stars.mjs && node tools/build-constellations.mjs",
+    "build:icons": "node scripts/build-icons.mjs",
     "test": "node --test",
     "fetch:horizons": "node tools/fetch-horizons.mjs",
     "serve": "npx -y serve -l 8000 ."
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2"
   }
 }
