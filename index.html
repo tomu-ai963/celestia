@@ -99,10 +99,12 @@ input[type=date],input[type=time]{color-scheme:dark}
 .searchrow{display:flex;gap:8px;align-items:flex-end}
 .searchrow input{flex:1}
 button.go.sm{padding:5px 12px;font-size:10px;white-space:nowrap}
-#qmsg,#tzinfo{font-size:10px;letter-spacing:.06em;color:rgba(223,231,242,.42);
+#qmsg,#tzinfo,#dmsg{font-size:10px;letter-spacing:.06em;color:rgba(223,231,242,.42);
   min-height:13px;padding-top:4px;line-height:1.5}
-#qmsg.err{color:#e08a5f}
+#qmsg.err,#dmsg.err{color:#e08a5f}
 #qmsg.ok{color:var(--gold-dim)}
+/* 日時の範囲外メッセージ。出さないときは行ごと畳む（grid の gap を残さない） */
+#dmsg{grid-column:1/-1;min-height:0;padding-top:0}
 #tzinfo b{font-weight:400;color:var(--gold-dim);font-family:'JetBrains Mono',monospace}
 #tzinfo .warn{color:#e08a5f}
 .actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding-bottom:4px}
@@ -279,8 +281,10 @@ button.go:hover{background:var(--gold);color:var(--void)}
   <div id="grip"><span>◇ 出生データ</span><div class="bar"></div><span id="gripState">閉じる</span></div>
   <div id="form">
     <div class="fields">
-      <div class="f"><label>生年月日</label><input type="date" id="d" value="1990-07-14"></div>
+      <div class="f"><label>生年月日</label>
+        <input type="date" id="d" value="1990-07-14" min="1800-01-01" max="2050-12-31"></div>
       <div class="f"><label>出生時刻（現地）</label><input type="time" id="t" value="09:30"></div>
+      <div id="dmsg" hidden></div>
       <div class="f wide"><label>出生地を検索</label>
         <div class="searchrow">
           <input type="search" id="q" placeholder="金沢 / Reykjavik / Sydney …"
@@ -1149,7 +1153,22 @@ elSlide.addEventListener('input',()=>{
 const elLat=document.getElementById('lat'), elLon=document.getElementById('lon'),
       elTz=document.getElementById('tz'), elPlace=document.getElementById('place'),
       elQ=document.getElementById('q'), elQMsg=document.getElementById('qmsg'),
-      elTzInfo=document.getElementById('tzinfo');
+      elTzInfo=document.getElementById('tzinfo'), elDMsg=document.getElementById('dmsg');
+
+const pad2=n=>String(n).padStart(2,'0');
+/** UT のユリウス日を、指定ゾーンの壁時計表記にする（対応範囲の端の提示に使う） */
+function fmtZoned(tz,jdUT){
+  const z=jdToZoned(tz,jdUT);
+  return `${z.y}.${pad2(z.m)}.${pad2(z.d)} ${pad2(z.h)}:${pad2(z.mi)}`;
+}
+/* 対応範囲（1800–2050 UT）の端はゾーンによって壁時計上の位置が変わるので、
+   「1800–2050」ではなく実際に生成できる現地時刻の両端を出す
+   （Asia/Tokyo の下端が 1800.01.01 21:18 になるのは、1888年以前が LMT +9:18 のため） */
+function showDateError(tz,lead){
+  elDMsg.hidden=false; elDMsg.className='err';
+  elDMsg.textContent=lead
+    +` · このタイムゾーンでは ${fmtZoned(tz,JD_MIN_UT)} 〜 ${fmtZoned(tz,JD_MAX_UT)} を生成できます`;
+}
 
 function run(){
   const dv=document.getElementById('d').value, tv=document.getElementById('t').value||'12:00';
@@ -1158,10 +1177,20 @@ function run(){
   const la=parseFloat(elLat.value)||0;
   const lo=parseFloat(elLon.value)||0;
   const tz=isValidZone(elTz.value)?elTz.value:'UTC';
-  latDeg=la; lonDeg=lo; tzId=tz;
+  /* date/time 入力が使えない環境ではテキストとして任意の文字列が来る。
+     数値にならない値を渡すと zonedToJd は Intl 経由で RangeError を投げるので、手前で弾く */
+  if(![Y,M,D,h,mi].every(Number.isFinite)){ showDateError(tz,'日時を読み取れませんでした'); return; }
   // 固定オフセットではなく IANA ゾーンで換算するので、夏時間期間の出生時刻も合う
   const z=zonedToJd(tz,Y,M,D,h,mi);
-  natalJdUT=Math.max(JD_MIN_UT,Math.min(JD_MAX_UT,z.jd));
+  /* 範囲外はクランプしない。丸めると「入力した日付の表示」と「境界で計算した天球」が
+     食い違ったまま出てしまう（2200年と表示された 2050年の空、など）。
+     ここで返す場合は状態を一切変えない */
+  if(!(z.jd>=JD_MIN_UT&&z.jd<=JD_MAX_UT)){
+    showDateError(tz,`${dv.replace(/-/g,'.')} ${tv} は対応範囲外です`); return;
+  }
+  elDMsg.hidden=true; elDMsg.textContent='';
+  latDeg=la; lonDeg=lo; tzId=tz;
+  natalJdUT=z.jd;
   natalChart=computeChart(natalJdUT,latDeg,lonDeg);
   winCenter=natalJdUT; edgeHit=null;
   setPlaying(false);
