@@ -99,12 +99,12 @@ input[type=date],input[type=time]{color-scheme:dark}
 .searchrow{display:flex;gap:8px;align-items:flex-end}
 .searchrow input{flex:1}
 button.go.sm{padding:5px 12px;font-size:10px;white-space:nowrap}
-#qmsg,#tzinfo,#dmsg{font-size:10px;letter-spacing:.06em;color:rgba(223,231,242,.42);
+#qmsg,#tzinfo,#dmsg,#llmsg{font-size:10px;letter-spacing:.06em;color:rgba(223,231,242,.42);
   min-height:13px;padding-top:4px;line-height:1.5}
-#qmsg.err,#dmsg.err{color:#e08a5f}
+#qmsg.err,#dmsg.err,#llmsg.err{color:#e08a5f}
 #qmsg.ok{color:var(--gold-dim)}
-/* 日時の範囲外メッセージ。出さないときは行ごと畳む（grid の gap を残さない） */
-#dmsg{grid-column:1/-1;min-height:0;padding-top:0}
+/* 日時・緯度経度の範囲外メッセージ。出さないときは行ごと畳む（grid の gap を残さない） */
+#dmsg,#llmsg{grid-column:1/-1;min-height:0;padding-top:0}
 #tzinfo b{font-weight:400;color:var(--gold-dim);font-family:'JetBrains Mono',monospace}
 #tzinfo .warn{color:#e08a5f}
 .actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding-bottom:4px}
@@ -296,8 +296,11 @@ button.go:hover{background:var(--gold);color:var(--void)}
       <div class="f wide"><label>プリセット / 検索結果</label>
         <select id="place"></select>
       </div>
-      <div class="f"><label>緯度</label><input type="number" id="lat" step="0.0001" value="35.68"></div>
-      <div class="f"><label>経度</label><input type="number" id="lon" step="0.0001" value="139.77"></div>
+      <div class="f"><label>緯度</label>
+        <input type="number" id="lat" step="0.0001" min="-90" max="90" value="35.68"></div>
+      <div class="f"><label>経度</label>
+        <input type="number" id="lon" step="0.0001" min="-180" max="180" value="139.77"></div>
+      <div id="llmsg" hidden></div>
       <div class="f wide"><label>タイムゾーン</label>
         <select id="tz"></select>
         <div id="tzinfo"></div>
@@ -372,7 +375,7 @@ import { searchPlace, reasonText } from './src/geocode.mjs';
    既定オフなので、トグルが off の間は computeHouses も findAspects も呼ばれない */
 import {
   computeHouses, houseOf, findAspects, BODY_SETS, HOUSE_METHODS,
-  interpretationKeys, interpret, hasInterpreter, signKey
+  interpretationKeys, interpret, hasInterpreter, signKey, MAX_LAT
 } from './src/astrology.mjs';
 
 /* ============================================================
@@ -853,6 +856,14 @@ function showAstroNote(){
     if(Math.abs(latDeg)>POLAR_CIRCLE)
       tx+=' / 極圏なので、黄道が西側で昇り ASC が西半分に来ることがあります';
   }
+  /* 極点付近は入力として通す（天球そのものは描ける）が、±90° では tan φ が発散して
+     ASC が定義できないので占星術レイヤーは ±89.9° に丸める（astrology.mjs の MAX_LAT）。
+     丸めた事実は黙らせない */
+  if(Math.abs(latDeg)>MAX_LAT){
+    cls='warn';
+    tx+=` / 緯度 ${latDeg.toFixed(2)}° では ASC が定義できないため、`
+      +`ハウスは ${latDeg<0?'−':''}${MAX_LAT}° として計算しています`;
+  }
   const key=cls+'|'+tx;
   if(key!==lastNote){ el.className=cls; el.textContent=tx; lastNote=key; }
 }
@@ -1153,7 +1164,8 @@ elSlide.addEventListener('input',()=>{
 const elLat=document.getElementById('lat'), elLon=document.getElementById('lon'),
       elTz=document.getElementById('tz'), elPlace=document.getElementById('place'),
       elQ=document.getElementById('q'), elQMsg=document.getElementById('qmsg'),
-      elTzInfo=document.getElementById('tzinfo'), elDMsg=document.getElementById('dmsg');
+      elTzInfo=document.getElementById('tzinfo'), elDMsg=document.getElementById('dmsg'),
+      elLLMsg=document.getElementById('llmsg');
 
 const pad2=n=>String(n).padStart(2,'0');
 /** UT のユリウス日を、指定ゾーンの壁時計表記にする（対応範囲の端の提示に使う） */
@@ -1169,26 +1181,49 @@ function showDateError(tz,lead){
   elDMsg.textContent=lead
     +` · このタイムゾーンでは ${fmtZoned(tz,JD_MIN_UT)} 〜 ${fmtZoned(tz,JD_MAX_UT)} を生成できます`;
 }
-
-function run(){
-  const dv=document.getElementById('d').value, tv=document.getElementById('t').value||'12:00';
-  if(!dv) return;
-  const [Y,M,D]=dv.split('-').map(Number), [h,mi]=tv.split(':').map(Number);
-  const la=parseFloat(elLat.value)||0;
-  const lo=parseFloat(elLon.value)||0;
-  const tz=isValidZone(elTz.value)?elTz.value:'UTC';
+/** 日時の検証。通れば zonedToJd の結果、駄目ならメッセージを出して null */
+function checkDate(tz,dv,tv,Y,M,D,h,mi){
   /* date/time 入力が使えない環境ではテキストとして任意の文字列が来る。
      数値にならない値を渡すと zonedToJd は Intl 経由で RangeError を投げるので、手前で弾く */
-  if(![Y,M,D,h,mi].every(Number.isFinite)){ showDateError(tz,'日時を読み取れませんでした'); return; }
+  if(![Y,M,D,h,mi].every(Number.isFinite)){ showDateError(tz,'日時を読み取れませんでした'); return null; }
   // 固定オフセットではなく IANA ゾーンで換算するので、夏時間期間の出生時刻も合う
   const z=zonedToJd(tz,Y,M,D,h,mi);
   /* 範囲外はクランプしない。丸めると「入力した日付の表示」と「境界で計算した天球」が
      食い違ったまま出てしまう（2200年と表示された 2050年の空、など）。
      ここで返す場合は状態を一切変えない */
   if(!(z.jd>=JD_MIN_UT&&z.jd<=JD_MAX_UT)){
-    showDateError(tz,`${dv.replace(/-/g,'.')} ${tv} は対応範囲外です`); return;
+    showDateError(tz,`${dv.replace(/-/g,'.')} ${tv} は対応範囲外です`); return null;
   }
   elDMsg.hidden=true; elDMsg.textContent='';
+  return z;
+}
+
+/* number 入力は読めない値を空文字で返す。従来の `parseFloat(v)||0` はそれを 0 に落とすため、
+   空欄や打ち間違いが**赤道上のギニア湾**（0°,0°）として黙って通っていた。
+   parseFloat は '35.68abc' も 35.68 として拾うので、Number で厳密に読んで NaN のまま渡す */
+const readNum=el=>{ const s=el.value.trim(); return s===''?NaN:Number(s); };
+const LAT_MAX=90, LON_MAX=180;
+/** 緯度経度の検証。駄目な項目をまとめて挙げて false */
+function checkLatLon(la,lo){
+  const bad=[];
+  if(!(Number.isFinite(la)&&Math.abs(la)<=LAT_MAX)) bad.push(`緯度は −${LAT_MAX}〜${LAT_MAX}`);
+  if(!(Number.isFinite(lo)&&Math.abs(lo)<=LON_MAX)) bad.push(`経度は −${LON_MAX}〜${LON_MAX}`);
+  if(!bad.length){ elLLMsg.hidden=true; elLLMsg.textContent=''; return true; }
+  elLLMsg.hidden=false; elLLMsg.className='err';
+  elLLMsg.textContent=bad.join(' · ')+' の範囲で入力してください';
+  return false;
+}
+
+function run(){
+  const dv=document.getElementById('d').value, tv=document.getElementById('t').value||'12:00';
+  if(!dv) return;
+  const [Y,M,D]=dv.split('-').map(Number), [h,mi]=tv.split(':').map(Number);
+  const la=readNum(elLat), lo=readNum(elLon);
+  const tz=isValidZone(elTz.value)?elTz.value:'UTC';
+  // 両方とも検証してから弾く（片方を直したら次のエラーが出る、という往復を避ける）
+  const llOk=checkLatLon(la,lo);
+  const z=checkDate(tz,dv,tv,Y,M,D,h,mi);
+  if(!llOk||!z) return;                 // ここで返す場合は状態を一切変えない
   latDeg=la; lonDeg=lo; tzId=tz;
   natalJdUT=z.jd;
   natalChart=computeChart(natalJdUT,latDeg,lonDeg);
