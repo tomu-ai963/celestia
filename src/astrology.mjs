@@ -306,6 +306,13 @@ export function findAspects(chart, opts = {}) {
  *   import { setInterpreter } from './src/astrology.mjs';
  *   setInterpreter(async keys => (await fetch('/my/texts.json').then(r => r.json())));
  * 戻り値は「キー → 文字列」のオブジェクト。持っていないキーは省略してよい。
+ *
+ * ■ テキストは **プレーンテキストとして扱う**
+ * 呼び出し側は textContent で描画する（HTML としては解釈しない）。信頼できない
+ * プロバイダの文字列がそのまま DOM に入ると XSS になるので、この約束は変えないこと。
+ * 改行は `\n` で書けば表示に反映される（CSS の white-space: pre-line）。
+ * 装飾つきで出したくなった場合は、HTML を通すのではなく独自記法をこちら側で
+ * 組み立てる（サニタイズを挟む設計は、抜けたときの影響が大きすぎる）。
  */
 export const NO_INTERPRETATION = async () => ({});
 

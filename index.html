@@ -204,8 +204,11 @@ button.go:hover{background:var(--gold);color:var(--void)}
 #astroNote.warn{color:#e08a5f}
 .rd-ang{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--violet)}
 #card dd.hs{color:var(--violet)}
+/* 解釈テキストは外部データを **textContent で** 入れる（HTML として解釈させない）。
+   複数キーの区切りは改行なので、pre-line で改行だけ活かす */
 #cdInterp{margin-top:11px;padding-top:10px;border-top:1px solid rgba(255,255,255,.07);
-  font-size:11px;line-height:1.75;letter-spacing:.03em;color:rgba(223,231,242,.72)}
+  font-size:11px;line-height:1.75;letter-spacing:.03em;color:rgba(223,231,242,.72);
+  white-space:pre-line}
 #cdInterp.none{color:rgba(223,231,242,.3);font-size:10px;line-height:1.6}
 #cdInterp[hidden]{display:none}
 
@@ -867,14 +870,27 @@ function showAstroNote(){
   const key=cls+'|'+tx;
   if(key!==lastNote){ el.className=cls; el.textContent=tx; lastNote=key; }
 }
-/** 解釈テキストの取得。既定のプロバイダは空を返すので、通常は「未接続」の表示になる。
-    毎フレームは呼ばない（時刻を動かしている間は取りに行かない） */
+/* 解釈テキストの取得。既定のプロバイダは空を返すので、通常は「未接続」の表示になる。
+   毎フレームは呼ばない（時刻を動かしている間は取りに行かない）。
+
+   **世代番号で最新の応答だけを採る。** この関数はレイヤーの切替・ハウス方式・
+   アスペクト対象・出生データの確定で何度も呼ばれ、外部プロバイダの応答順は
+   呼び出し順と一致しない。古い応答をそのまま入れると、別のチャート向けの
+   テキストが今のチャートの解釈として残る。
+   先頭で必ず番号を進めるので、レイヤーを切った側の呼び出しも
+   飛んでいる取得を無効化する（オフにした直後にテキストが遅れて出るのを防ぐ）。
+   プロバイダの差し替え口（keys → テキスト）は変えたくないので AbortController は使わない。
+   通信は続くが、表示に採らない時点で競合は起きない */
+let interpGen=0;
 async function refreshInterp(){
+  const gen=++interpGen;
   if(!astroOn||!showInterp||!chart){ interpTexts={}; uiDirty=true; return; }
   const set=BODY_SETS.find(s=>s.k===aspectSet);
-  interpTexts=await interpret(interpretationKeys({
+  const texts=await interpret(interpretationKeys({
     chart, houses, aspects, bodies:(set?set.keys:BODIES.map(b=>b.k))
   }));
+  if(gen!==interpGen) return;          // 追い越された古い応答は捨てる
+  interpTexts=texts;
   uiDirty=true;
 }
 
@@ -1027,14 +1043,16 @@ function updateAstroCard(p){
     cdAspK.hidden=cdAsp.hidden=!mine.length;
     if(mine.length) cdAsp.innerHTML=tx+(mine.length>5?`<br>ほか${mine.length-5}`:'');
   }else{ cdAspK.hidden=cdAsp.hidden=true; }
-  // 解釈テキストは外部データ。既定のスタブでは何も返らないので、その旨を出す
+  /* 解釈テキストは外部データ。既定のスタブでは何も返らないので、その旨を出す。
+     **innerHTML には入れない。** ここに来る文字列は差し替え可能なプロバイダの戻り値で、
+     タグやイベントハンドラが混ざれば XSS になる。改行は CSS の pre-line で見せる */
   const box=document.getElementById('cdInterp');
   if(!astroOn||!showInterp){ box.hidden=true; return; }
   box.hidden=false;
   const keys=[`body/${focusKey}/sign/${signKey(p.lon)}`];
   if(houses) keys.push(`body/${focusKey}/house/${houseOf(p.lon,houses.cusps)}`);
   const got=keys.map(k=>interpTexts[k]).filter(Boolean);
-  if(got.length){ box.className=''; box.innerHTML=got.join('<br>'); }
+  if(got.length){ box.className=''; box.textContent=got.join('\n'); }
   else{
     box.className='none';
     box.textContent=hasInterpreter()
