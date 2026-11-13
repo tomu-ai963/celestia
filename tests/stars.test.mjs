@@ -70,3 +70,48 @@ test('stars.json の形式とサイズ制約', () => {
     assert.ok(mag <= 650, `mag[${i}]=${mag} exceeds 6.5 limit`);
   }
 });
+
+/* ---- 双眼鏡の段（data/stars-deep.json。docs/rendering-upgrade.md C.1・G.1） ---- */
+function loadDeep() {
+  return JSON.parse(readFileSync(join(ROOT, 'data', 'stars-deep.json'), 'utf8'));
+}
+
+test('stars-deep.json の形式・範囲・並び・サイズ', () => {
+  const data = loadDeep();
+  assert.equal(data.stars.length, data.count * 4, 'フラット配列は 4 x count');
+  assert.equal(data.magFloor, 6.5);
+  assert.equal(data.magLimit, 8.0);
+  // HYG v4.1 で 6.5 < 等級 ≤ 8.0 は 32,567 個（設計書 C.1）。生成し直して数が動いたら気づけるように幅を狭く取る
+  assert.ok(data.count > 32000 && data.count < 33000, `count=${data.count}`);
+  const size = statSync(join(ROOT, 'data', 'stars-deep.json')).size;
+  assert.ok(size <= 700 * 1024, `stars-deep.json is ${(size / 1024).toFixed(1)} KB > 700 KB`);
+  let prev = -Infinity;
+  for (let i = 0; i < data.count; i++) {
+    const lon = data.stars[i * 4], lat = data.stars[i * 4 + 1], mag = data.stars[i * 4 + 2];
+    assert.ok(Number.isInteger(lon) && lon >= 0 && lon < 360000, `lon[${i}]=${lon}`);
+    assert.ok(Number.isInteger(lat) && lat >= -90000 && lat <= 90000, `lat[${i}]=${lat}`);
+    assert.ok(mag > 650 && mag <= 800, `mag[${i}]=${mag} は 6.5 < 等級 ≤ 8.0 の外`);
+    assert.ok(mag >= prev, `明るい順になっていない: [${i}] ${mag} < ${prev}`);
+    prev = mag;
+  }
+});
+
+test('肉眼の段と双眼鏡の段は重ならない（等級の範囲も、同じ位置の星も）', () => {
+  const naked = loadStars(), deep = loadDeep();
+  let nakedMax = -Infinity;
+  const pos = new Set();
+  for (let i = 0; i < naked.count; i++) {
+    nakedMax = Math.max(nakedMax, naked.stars[i * 4 + 2]);
+    pos.add(`${naked.stars[i * 4]},${naked.stars[i * 4 + 1]}`);
+  }
+  assert.ok(nakedMax <= 650, `肉眼の段の最大 ${nakedMax}`);
+  let dup = 0;
+  for (let i = 0; i < deep.count; i++) if (pos.has(`${deep.stars[i * 4]},${deep.stars[i * 4 + 1]}`)) dup++;
+  assert.equal(dup, 0, '同じ位置の星が両方の段にある');
+});
+
+test('stars.json は 2 段化の前とバイト単位で同じ（SHA-256）', async () => {
+  const { createHash } = await import('node:crypto');
+  const h = createHash('sha256').update(readFileSync(join(ROOT, 'data', 'stars.json'))).digest('hex');
+  assert.equal(h, '180cc81aac22371c6f5740070f1909b9c6006f84d0e161b95ae681cb4f710185');
+});

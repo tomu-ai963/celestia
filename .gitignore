@@ -1,2 +1,5 @@
 tools/.cache/
 node_modules/
+tests/visual/out/
+# 天の川の元データ（OpenEXR。約 33 MB）はリポジトリに入れない。tools/build-milkyway.mjs が tools/.cache/svs/ に置く
+*.exr

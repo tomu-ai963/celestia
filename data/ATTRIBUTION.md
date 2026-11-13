@@ -1,14 +1,15 @@
 # データの帰属表示（Attribution）
 
-`data/` 配下のファイルは、以下の外部データソースを変換して生成した**派生物**であり、
-それぞれ元データのライセンス（CC BY-SA 系）を継承する。
+`data/` 配下のファイルと `assets/sky/` の天の川の画像は、以下の外部データソースを変換して生成した**派生物**であり、
+それぞれ元データの条件に従う（星と星座線は CC BY-SA 系を継承する。天の川の画像は NASA の指針に従う。各節を参照）。
 リポジトリのソースコード（MIT ライセンス）とはライセンスが異なることに注意。
 
-再生成の手順はリポジトリの `tools/build-stars.mjs` / `tools/build-constellations.mjs` を参照。
+再生成の手順はリポジトリの `tools/build-stars.mjs` / `tools/build-constellations.mjs` /
+`tools/build-milkyway.mjs` を参照。
 
 ---
 
-## data/stars.json
+## data/stars.json・data/stars-deep.json
 
 - **出典**: HYG Database v4.1（hygdata_v41.csv）
 - **原著者**: David Nash (The Astronomy Nexus)。原典は Hipparcos / Yale Bright Star /
@@ -27,7 +28,12 @@
 5. B-V 色指数が欠損している40星に、収録範囲の平均値 0.63 を代入
 6. 明るい順にソートし、フラットな数値配列の JSON として再エンコード
 
-**このファイルは上記変更を加えた派生物として CC BY-SA 4.0 を継承する。**
+`data/stars-deep.json`（「双眼鏡の空」で後から読む段）も同じ手順で作る。違いは次の 2 点だけ。
+
+- 視等級 6.5 より暗く 8.0 以下の恒星（丸める前の等級で切る。stars.json とは重ならない）。32,567星
+- B-V 色指数が欠損している72星に、同じ 0.63 を代入
+
+**これらのファイルは上記変更を加えた派生物として CC BY-SA 4.0 を継承する。**
 
 ---
 
@@ -66,6 +72,48 @@ CC BY-SA を継承する。**
 
 ---
 
+## assets/sky/milkyway-2048.webp・milkyway-4096.webp・milkyway.json（天の川の背景）
+
+- **出典**: NASA Scientific Visualization Studio「Deep Star Maps 2020」（ID 4851）の
+  `milkyway_2020_4k_gal.exr`（4096×2048、OpenEXR 半精度・線形）。
+  ページの説明: “The Milky Way background in galactic coordinates. This is a version of the star map
+  that omits the bright (Hipparcos and Tycho) stars.”（銀河座標の正距円筒。中心が銀経 0°、経度は左へ増える。
+  銀河座標の画像は 2021-01-04 に変換の誤りを直したものへ差し替え済み）
+- **取得元**: https://svs.gsfc.nasa.gov/4851
+  （ファイル: https://svs.gsfc.nasa.gov/vis/a000000/a004800/a004851/milkyway_2020_4k_gal.exr 、
+  SHA-256 `fad63b36aa632c691d521cd9d8b828de9d29b4c2784276eec44e54c6cb159a49`。元の EXR はリポジトリに含めない）
+- **クレジット**（ページの Credits 欄の表記をそのまま。画面上の「出典」にも同じ文言を載せている）:
+
+  > Please give credit for this item to:
+  > NASA/Goddard Space Flight Center Scientific Visualization Studio. Gaia DR2: ESA/Gaia/DPAC.
+  > Constellation figures based on those developed for the IAU by Alan MacRobert of Sky and Telescope
+  > magazine (Roger Sinnott and Rick Fienberg).
+
+  ※ 最後の一文は同じページの星座線の画像についての表記で、celestia は SVS の星座線の画像を使っていない
+  （星座線は下の Stellarium 由来）。Credits 欄の表記をそのまま載せる方針（とむ決定）のため残している
+- **元になったカタログ**（ページの「Datasets used」の記載）: Hipparcos Catalogue、
+  Tycho Catalogue (Tycho 2 Catalogue)、UCAC3、Gaia DR2 (Data Release 2) — “Credit: Gaia team/ESA”
+- **利用条件**: ページにライセンスの記載はない。NASA の画像の一般指針（米国では原則として著作権の対象外。
+  出所として NASA を示すこと、NASA による推奨・後援と受け取られる使い方をしないこと）に従う。
+  元データの Gaia DR2 に対する ESA 側の条件がこの派生画像にどう及ぶかは読み取れていない
+  （docs/rendering-upgrade.md H-4）。採用はとむの判断（2026-11-13）
+
+### 加えた変更（原データそのままではない）
+
+再生成は `node tools/build-milkyway.mjs`（処理の値は `assets/sky/milkyway.json` の `processing` に記録）。
+
+1. 線形の浮動小数のまま、ガウスぼかし（4096 px で σ 1.2 画素 ≈ 0.1°）。Gaia の暗い星の細かい粒を
+   ならし、配信の容量に収めるため
+2. 背景の底上げ分を引く（輝度の 1 パーセンタイル 0.0017 を全チャンネルから引き、0 で切る）
+3. 画素ごとの最も明るいチャンネルの最大値が 1.0 になるよう倍率を掛ける（最大値は 99.99 パーセンタイルの
+   1.045 倍で、孤立した外れ値ではないことを確認。1 を超えた画素は 0）
+4. sRGB に変換し、三角分布のディザ（±1 段、種つきの乱数）をかけて 8 ビットに
+5. 4096×2048 と、線形のまま 2×2 の平均で縮小した 2048×1024 を WebP（品質 85）で書き出す
+6. 表示では、銀河中心のふくらみ（1° 角の平均の最大、テクスチャの値で 0.810）が線形 0.03
+   （双眼鏡の空で 0.06）になる倍率を掛けて、星の後ろに描く
+
+---
+
 ## 実行時に問い合わせる外部サービス
 
 `data/` には含まれないが、アプリが実行時に利用するもの。
@@ -90,7 +138,5 @@ CC BY-SA を継承する。**
 
 ## 該当しないもの
 
-- `index.html` 内の天の川レイヤーは銀河座標系の向きのみ正確な**手続き生成の装飾**であり、
-  外部データの派生物ではない（コードとして MIT）
 - 惑星・月の位置計算（JPL 近似軌道要素・Meeus の月の級数）は係数を論文・公開資料から
   実装したコードであり、`data/` のデータライセンスとは無関係
