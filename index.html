@@ -229,6 +229,9 @@ button.go:hover{background:var(--gold);color:var(--void)}
   .fields{grid-template-columns:1fr}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+/* 検証モード（?verify=1。tools/shoot.mjs が使う）: 画面の比較に要らない操作パネル類を隠す */
+body.verify #mast,body.verify #readout,body.verify #card,body.verify #console,
+body.verify #hint,body.verify #starload{display:none!important}
 </style>
 </head>
 <body>
@@ -381,6 +384,20 @@ import {
   interpretationKeys, interpret, hasInterpreter, signKey, MAX_LAT
 } from './src/astrology.mjs';
 
+/* 検証モード（docs/rendering-upgrade.md G.2）。問い合わせ文字列で条件を固定する。
+   何も付けなければ今までと同じ動きをする（自動回転・補間・乱数はそのまま） */
+const QS=new URLSearchParams(location.search);
+const VERIFY=QS.get('verify')==='1';
+if(VERIFY) document.body.classList.add('verify');
+/** seed=n があれば種つきの乱数（mulberry32）、なければ Math.random そのもの */
+const rand=(()=>{
+  const s=QS.get('seed'); if(s===null||!/^\d+$/.test(s)) return Math.random;
+  let a=Number(s)>>>0;
+  return ()=>{ a=(a+0x6D2B79F5)>>>0; let t=a;
+    t=Math.imul(t^(t>>>15),t|1); t^=t+Math.imul(t^(t>>>7),t|61);
+    return ((t^(t>>>14))>>>0)/4294967296; };
+})();
+
 /* ============================================================
    2. 3D 天球
    ============================================================ */
@@ -500,12 +517,14 @@ async function loadStars(){
     buildStars(await rs.json());
     buildConstellations(await rc.json());
     el.classList.add('done');
+    return true;
   }catch(e){
     el.classList.add('err');
     el.innerHTML='星野データを読み込めません<br>ローカルサーバーで開いてください（README 参照）';
+    return false;
   }
 }
-loadStars();
+const starsLoaded=loadStars();
 
 /* --- 天の川（装飾レイヤー） ---
    注意: これは天文データではない。銀河座標系の向き（銀河北極・銀河中心の J2000 値）
@@ -529,19 +548,19 @@ function buildMilkyWay(){
   const R=1660;
   let i=0;
   while(i<N){
-    const l=Math.random()*360;
+    const l=rand()*360;
     const dl=norm(l+180)-180;                       // 銀河中心からの銀経差 [-180,180)
     const toC=Math.exp(-dl*dl/(2*70*70));           // 中心への近さ 0..1
-    if(Math.random()>0.30+0.70*toC) continue;       // 銀河中心側ほど高密度（非対称性）
+    if(rand()>0.30+0.70*toC) continue;              // 銀河中心側ほど高密度（非対称性）
     const sigma=5.5+6.0*toC;                        // バルジ側は帯が太い
-    const g=(Math.random()+Math.random()+Math.random()+Math.random()-2)*1.73;
+    const g=(rand()+rand()+rand()+rand()-2)*1.73;
     const b=g*sigma;                                // 銀緯方向はガウス減衰
     const p=gal2ecl(l,b);
     pos[i*3]=p[0]*R; pos[i*3+1]=p[2]*R; pos[i*3+2]=-p[1]*R; // 黄道直交 → (x,z,-y)
-    const br=(0.014+0.022*Math.random())*(0.35+0.65*toC);
+    const br=(0.014+0.022*rand())*(0.35+0.65*toC);
     const warm=0.35+0.65*toC;                       // 中心側はやや暖色
     col[i*3]=br*(0.82+0.15*warm); col[i*3+1]=br*0.85; col[i*3+2]=br*(1.02-0.20*warm);
-    sz[i]=42+Math.random()*55;
+    sz[i]=42+rand()*55;
     i++;
   }
   const g2=new THREE.BufferGeometry();
@@ -765,7 +784,8 @@ function placeBodies(snap){
 function updateMarks(){
   BODIES.forEach(b=>{
     const m=marks[b.k], t=posTarget[b.k]; if(!t) return;
-    posNow[b.k].lerp(t,0.06);
+    // 検証モードでは補間を挟まず目標値へ即時に置く（撮るたびに途中の値を拾わないように）
+    if(VERIFY) posNow[b.k].copy(t); else posNow[b.k].lerp(t,0.06);
     const p=posNow[b.k];
     m.sp.position.copy(p);
     const foc = focusKey===b.k;
@@ -774,11 +794,13 @@ function updateMarks(){
     m.sp.scale.set(sc,sc,1);
     m.sp.material.opacity=focusKey&&!foc?0.45:1;
     m.lb.position.copy(p).add(new THREE.Vector3(0,base*0.9,0));
-    m.lb.material.opacity += ((foc?0.95:0.0)-m.lb.material.opacity)*0.12;
+    if(VERIFY) m.lb.material.opacity=foc?0.95:0.0;
+    else m.lb.material.opacity += ((foc?0.95:0.0)-m.lb.material.opacity)*0.12;
     const arr=m.ray.geometry.attributes.position;
     const far=p.clone().normalize().multiplyScalar(SKY*0.985);
     arr.setXYZ(0,0,0,0); arr.setXYZ(1,far.x,far.y,far.z); arr.needsUpdate=true;
-    m.ray.material.opacity += ((foc?0.5:0.13)-m.ray.material.opacity)*0.1;
+    if(VERIFY) m.ray.material.opacity=foc?0.5:0.13;
+    else m.ray.material.opacity += ((foc?0.5:0.13)-m.ray.material.opacity)*0.1;
   });
 }
 
@@ -1468,8 +1490,11 @@ let t0=performance.now(), uiAcc=0;
   uiAcc+=dt;
   if(uiDirty && uiAcc>0.12){ uiAcc=0; uiDirty=false; updateReadout(); updateCard(); }
 
-  camR+=(tR-camR)*0.07; camTheta+=(tTheta-camTheta)*0.1; camPhi+=(tPhi-camPhi)*0.1;
-  if(!drag && !REDUCED) tTheta+=dt*0.012;
+  if(VERIFY){ camR=tR; camTheta=tTheta; camPhi=tPhi; }   // 検証モード: 補間も自動回転もしない
+  else{
+    camR+=(tR-camR)*0.07; camTheta+=(tTheta-camTheta)*0.1; camPhi+=(tPhi-camPhi)*0.1;
+    if(!drag && !REDUCED) tTheta+=dt*0.012;
+  }
   camera.position.set(
     camR*Math.sin(camPhi)*Math.cos(camTheta),
     camR*Math.cos(camPhi),
@@ -1479,8 +1504,65 @@ let t0=performance.now(), uiAcc=0;
   renderer.render(scene,camera);
 })();
 
+/* --- 検証モードの入口（docs/rendering-upgrade.md G.2・G.3）---
+   tools/shoot.mjs が条件を固定して撮るための口。verify=1 のときだけ働き、通常の表示には何も足さない */
+function verifyInputs(){
+  for(const k of ['d','t','lat','lon']) if(QS.has(k)) document.getElementById(k).value=QS.get(k);
+  if(QS.has('tz')) elTz.value=QS.get('tz');
+}
+function verifyAfterRun(){
+  const TOGS={real:'tReal',astro:'tAstro',dist:'tDist',horiz:'tHoriz',trail:'tTrail'};
+  for(const k of (QS.get('tog')||'').split(',')){        // 指定したトグルを「オン」にする
+    const el=TOGS[k]&&document.getElementById(TOGS[k]);
+    if(el&&!el.classList.contains('on')) el.onclick();
+  }
+  const cam=(QS.get('cam')||'').split(',').map(Number);   // θ,φ,R（toggle の後。tDist が tR を触るため）
+  if(cam.length===3&&cam.every(Number.isFinite)){
+    [camTheta,camPhi,camR]=cam; tTheta=camTheta; tPhi=camPhi; tR=camR;
+  }
+}
+/** 実際に描画に使っているジオメトリの頂点を、matrixWorld とカメラで CSS 画素へ直す（小数4桁） */
+function probe(){
+  const W=innerWidth, H=innerHeight, v=new THREE.Vector3(), r4=x=>Math.round(x*1e4)/1e4;
+  const px=()=>[r4((v.x+1)/2*W), r4((1-v.y)/2*H)];
+  const pts=obj=>{
+    const a=obj.geometry.attributes.position, n=Math.min(a.count,obj.geometry.drawRange.count);
+    const out=new Array(n*2);
+    for(let i=0;i<n;i++){
+      v.fromBufferAttribute(a,i).applyMatrix4(obj.matrixWorld).project(camera);
+      [out[i*2],out[i*2+1]]=px();
+    }
+    return out;
+  };
+  const lines=g=>g.visible?g.children.filter(o=>o.isLine&&o.visible).map(pts):[];
+  return {
+    W, H,
+    stars: starGroup.children.map(pts),
+    constellations: constGroup.children.map(pts),
+    bodies: Object.fromEntries(BODIES.map(b=>{
+      v.setFromMatrixPosition(marks[b.k].sp.matrixWorld).project(camera); return [b.k,px()]; })),
+    ecliptic: lines(zodiacGroup),
+    horizon: lines(horizGroup),
+    real: lines(realGroup),
+    astro: lines(astroGroup)
+  };
+}
+if(VERIFY){
+  /* ready: 星のデータを読み終え、そのあと2フレーム以上描いたら解決する */
+  const frames=n=>new Promise(r=>{ const f=()=>(--n<=0?r():requestAnimationFrame(f)); requestAnimationFrame(f); });
+  window.__celestia={
+    ready: starsLoaded.then(ok=>frames(3).then(()=>ok)),
+    probe,
+    info: ()=>({ calls: renderer.info.render.calls, triangles: renderer.info.render.triangles,
+                 points: renderer.info.render.points, lines: renderer.info.render.lines,
+                 textures: renderer.info.memory.textures, geometries: renderer.info.memory.geometries })
+  };
+}
+
 buildReadout();
+if(VERIFY) verifyInputs();
 run();
+if(VERIFY) verifyAfterRun();
 setTimeout(()=>{
   document.getElementById('console').classList.remove('open');
   document.getElementById('gripState').textContent='開く';
