@@ -381,7 +381,7 @@ setInterpreter(async keys => await fetch('/my/texts.json').then(r => r.json()));
 - [x] HDR・トーンカーブ・ブルームと品質の段階（Q0・Q1・Q2）
 - [x] 星データの 2 段化（双眼鏡の空、8.0 等まで）
 - [x] 天の川を NASA SVS の画像に差し替え
-- [ ] ブルーム・露出・天の川の明るさの実機での調整（スマホ）
+- [ ] ブルーム・露出・天の川の明るさの実機での調整（スマホ。`?tune=1` のパネルで行う）
 
 ---
 
@@ -405,6 +405,12 @@ npm run verify:shoot -- --out tests/visual/out/now           # 固定条件 V1�
 npm run verify:compare -- tests/visual/baseline tests/visual/out/now --probe-only   # 星・線・天体の位置を移行前と比べる
 node tools/check-centroids.mjs tests/visual/out/sky          # layers=sky で撮った画面の星の重心
 ```
+
+実機（スマホ）での値の調整は `index.html?tune=1` で開く。露出・P_max・σ0・ブルーム・光芒・天の川の明るさ・
+トーンカーブの折れ点をスライダーで動かすと、その場で描画に反映される。「今の値をコピー」で出る JSON の
+`STAR_DEFAULTS`・`BINOCULAR`・`BLOOM_DEFAULTS` の {…} を、`src/starlight.mjs` の同名のオブジェクトに貼り替える。
+値は保存しない。ブルームは Q2、光芒は Q1・Q0 でだけ効くので、`&q=1` などを足して見比べる。
+`tune=1` がないときはパネルのコード（`src/tune-panel.mjs`）を読み込まない。
 
 撮影は `index.html?verify=1` の検証モードを使う（自動回転・補間を止め、`d` `t` `lat` `lon` `tz` `cam` `tog`
 `layers` `q` `bloom` `deep` `deepmax` `mw` `debug=mw` で条件を固定する）。`tests/visual/baseline/` は

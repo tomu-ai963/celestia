@@ -8,7 +8,11 @@
  * 単位: 幅 σ と点の大きさは「実画素」（CSS 画素 × pixelRatio）。色は線形の Rec.709（sRGB の原色）。
  */
 
-/** 既定値（B.2・B.4。実機で調整する。H-2） */
+/**
+ * 既定値（B.2・B.4・D.7。実機で調整する。H-2・H-3）。
+ * index.html の ?tune=1 のパネルの「今の値をコピー」は、STAR_DEFAULTS・BINOCULAR・BLOOM_DEFAULTS の
+ * 中身をこの形のまま出す。それぞれの {…} を貼り替えれば既定値が変わる
+ */
 export const STAR_DEFAULTS = Object.freeze({
   magWhite: 3.0,     // 最小サイズの星のピークが 1.0（表示上の白）になる等級。露出に当たる
   magLimit: 7.0,     // 表示限界。ここから 0.5 等明るい側までをなめらかに消す
@@ -16,9 +20,15 @@ export const STAR_DEFAULTS = Object.freeze({
   gamma: 1.0,        // 1 が Pogson の式そのまま
   saturation: 0.85,  // 色の彩度（線形のまま白へ寄せる）
   knee: 0.75,        // トーンカーブの折れ点。ここまでは入力そのまま
+  sigmaFloor: 0.8,   // 最小の幅 σ0 の下限（実画素）。σ0 = max(sigmaFloor, sigmaPerPx · pixelRatio)
+  sigmaPerPx: 0.7,   // σ0 のうち pixelRatio に比例する分（CSS 画素あたり）
+  halo: 0.25,        // Q1・Q0 でブルームの代わりに足す光芒の強さ（Q2 では使わない。E.3）
+  mwGain: 0.03,      // 天の川の明るさ（銀河中心のふくらみの線形の値。D.7）
 });
-/** 双眼鏡モード（C.3） */
-export const BINOCULAR = Object.freeze({ magWhite: 4.5, magLimit: 8.5 });
+/** 双眼鏡モード（C.3）。ここにない値は STAR_DEFAULTS と同じ */
+export const BINOCULAR = Object.freeze({ magWhite: 4.5, magLimit: 8.5, mwGain: 0.06 });
+/** ブルーム（UnrealBloomPass。B.4.4） */
+export const BLOOM_DEFAULTS = Object.freeze({ strength: 0.2, radius: 0.4, threshold: 1.0, smoothWidth: 0.5 });
 
 const smoothstep = (e0, e1, x) => {
   const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
@@ -26,8 +36,8 @@ const smoothstep = (e0, e1, x) => {
 };
 
 /** 最小の幅 σ0（実画素）。CSS 画素あたりの総光量を端末の解像度によらず一定にする */
-export function sigmaMin(pixelRatio) {
-  return Math.max(0.8, 0.7 * pixelRatio);
+export function sigmaMin(pixelRatio, floor = STAR_DEFAULTS.sigmaFloor, perPx = STAR_DEFAULTS.sigmaPerPx) {
+  return Math.max(floor, perPx * pixelRatio);
 }
 
 /** 表示限界のフェード。m_limit − 0.5 から m_limit にかけて 1 → 0 */

@@ -402,7 +402,7 @@ import {
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { precessionMatrixThree, eclToThree, eclVecToThree } from './src/precession.mjs';
-import { STAR_DEFAULTS, BINOCULAR, sigmaMin, bvToLinearRGB } from './src/starlight.mjs';
+import { STAR_DEFAULTS, BINOCULAR, BLOOM_DEFAULTS, sigmaMin, bvToLinearRGB } from './src/starlight.mjs';
 import { galacticSphere, galToThree, equatorialToGalactic, REFERENCE_POINTS } from './src/galactic.mjs';
 import { zonedToJd, jdToZoned, zoneList, isValidZone, formatOffset } from './src/timezone.mjs';
 import { searchPlace, reasonText } from './src/geocode.mjs';
@@ -418,6 +418,10 @@ import {
 const QS=new URLSearchParams(location.search);
 const VERIFY=QS.get('verify')==='1';
 if(VERIFY) document.body.classList.add('verify');
+/** 実機で値を調整するパネル（?tune=1）。付けないときはパネルのコード（src/tune-panel.mjs）を読み込まない */
+const TUNE=QS.get('tune')==='1';
+/* 調整できる値の今の値。既定は src/starlight.mjs。パネルはここを書き換えてから反映の関数を呼ぶ */
+const STAR={...STAR_DEFAULTS}, BLOOM={...BLOOM_DEFAULTS};
 
 /* ============================================================
    2. 3D 天球
@@ -483,6 +487,7 @@ const starUniforms={
   uSigmaMin:{value:sigmaMin(1)},              // 実画素。resize で pixelRatio から決め直す
   uMaxPointSize:{value:64},                   // 端末の点の大きさの上限（起動時に取る）
   uHalo:{value:0},          // Q1・Q0 でブルームの代わりに足す光芒の強さ（Q2 では 0。E.3）
+  uKnee:{value:STAR_DEFAULTS.knee},   // トーンカーブの折れ点（最終パスと共有）
   uInlineTone:{value:0},    // Q0（RT なし）で星のシェーダの中でトーンカーブと sRGB 変換をする（1）
 };
 const starMaterial=new THREE.ShaderMaterial({
@@ -513,15 +518,15 @@ const starMaterial=new THREE.ShaderMaterial({
       gl_Position=projectionMatrix*modelViewMatrix*vec4(position, 1.0);
     }`,
   fragmentShader:`
-    uniform float uInlineTone;
+    uniform float uInlineTone, uKnee;
     varying vec3 vColor;
     varying float vPeak, vSigma, vSize, vHalo, vSigmaH;
     // 中心からの距離の 2 乗 r2[実画素²] での像の値。starlight.mjs の starProfile
     float starProfile(float r2, float peak, float sigma){ return peak*exp(-r2/(2.0*sigma*sigma)); }
-    // 最終パスと同じトーンカーブ（knee 0.75）と sRGB 変換。Q0 で画面へ直接描くときだけ使う
+    // 最終パスと同じトーンカーブと sRGB 変換。Q0 で画面へ直接描くときだけ使う
     vec3 toneCurve(vec3 x){
-      vec3 hi=0.75 + 0.25*(1.0 - exp(-(x - 0.75)/0.25));
-      return mix(x, hi, step(vec3(0.75), x));
+      vec3 hi=uKnee + (1.0 - uKnee)*(1.0 - exp(-(x - uKnee)/(1.0 - uKnee)));
+      return mix(x, hi, step(vec3(uKnee), x));
     }
     vec3 linearToSRGB(vec3 c){
       return mix(12.92*c, 1.055*pow(c, vec3(1.0/2.4)) - 0.055, step(vec3(0.0031308), c));
@@ -625,8 +630,8 @@ const starsLoaded=loadStars();
    切り替えでは表示限界と露出を 1.2 秒かけて動かし、星が明るい順に現れるようにする。
    空はもう見えているので、読み込み中もトグルの文言を変えるだけで画面は隠さない */
 /* 肉眼と双眼鏡の空の、露出・表示限界・天の川の明るさ（銀河中心のふくらみの線形の値。D.7・H-3） */
-const NAKED_SKY={magWhite:STAR_DEFAULTS.magWhite, magLimit:STAR_DEFAULTS.magLimit, mwGain:0.03};
-const BINO_SKY={magWhite:BINOCULAR.magWhite, magLimit:BINOCULAR.magLimit, mwGain:0.06};
+const NAKED_SKY={magWhite:STAR_DEFAULTS.magWhite, magLimit:STAR_DEFAULTS.magLimit, mwGain:STAR_DEFAULTS.mwGain};
+const BINO_SKY={magWhite:BINOCULAR.magWhite, magLimit:BINOCULAR.magLimit, mwGain:BINOCULAR.mwGain};
 let deepOn=false, deepPoints=null, deepCount75=0, deepGen=0, deepReady=Promise.resolve(), skyAnim=null;
 const elDeep=document.getElementById('tDeep'), elDeepTx=document.getElementById('tDeepTx'),
       elDeepMsg=document.getElementById('deepmsg');
@@ -1647,7 +1652,7 @@ cv.addEventListener('click',e=>{
 const _bufSize=new THREE.Vector2();
 const hdrRT=new THREE.WebGLRenderTarget(1,1,{type:THREE.HalfFloatType,depthBuffer:false});
 const finalQuad=new FullScreenQuad(new THREE.ShaderMaterial({
-  uniforms:{ tHdr:{value:hdrRT.texture}, uKnee:{value:STAR_DEFAULTS.knee} },
+  uniforms:{ tHdr:{value:hdrRT.texture}, uKnee:starUniforms.uKnee },
   vertexShader:`varying vec2 vUv;
     void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
   fragmentShader:`
@@ -1687,12 +1692,12 @@ const BLOOM_OFF=VERIFY&&QS.get('bloom')==='0';
 let bloom=null;                          // UnrealBloomPass。Q2 になったときに初めて作る
 function bloomOn(){ return quality.q===2&&!BLOOM_OFF; }
 function applyQuality(){
-  starUniforms.uHalo.value = quality.q<2 ? 0.25 : 0;
+  starUniforms.uHalo.value = quality.q<2 ? STAR.halo : 0;
   starUniforms.uInlineTone.value = quality.q===0 ? 1 : 0;
   if(bloomOn()&&!bloom){
     // 解像度, 強さ, 半径, 閾値（B.4.4。実機で調整する。H-2）
-    bloom=new UnrealBloomPass(new THREE.Vector2(1,1),0.2,0.4,1.0);
-    bloom.highPassUniforms.smoothWidth.value=0.5;
+    bloom=new UnrealBloomPass(new THREE.Vector2(1,1),BLOOM.strength,BLOOM.radius,BLOOM.threshold);
+    bloom.highPassUniforms.smoothWidth.value=BLOOM.smoothWidth;
   }
   resize();
 }
@@ -1751,7 +1756,7 @@ function resize(){
   hdrRT.setSize(w,h);
   if(bloom) bloom.setSize(w,h);
   // σ0 は描く先の画素で決める（Q1・Q2 は RT の画素、Q0 は画面の画素）
-  starUniforms.uSigmaMin.value=sigmaMin(renderer.getPixelRatio()*sc);
+  starUniforms.uSigmaMin.value=sigmaMin(renderer.getPixelRatio()*sc,STAR.sigmaFloor,STAR.sigmaPerPx);
 }
 addEventListener('resize',resize); applyQuality();
 
@@ -1863,6 +1868,48 @@ if(VERIFY){
                  maxPointSize: starUniforms.uMaxPointSize.value, sigmaMin: starUniforms.uSigmaMin.value })
   };
 }
+
+/* --- 値の調整パネル（?tune=1）---
+   パネルの部品は src/tune-panel.mjs にあり、tune=1 のときだけ動的に読み込む（通常の表示では読まない）。
+   ここはパネルに渡す読み書きの口だけ。値は STAR・BLOOM・NAKED_SKY・BINO_SKY を書き換えて反映する */
+function tuneApi(){
+  /** 露出・表示限界・天の川の明るさを、今のモード（肉眼／双眼鏡）の目標値に合わせる。
+      切り替えの補間の途中なら、補間の行き先が同じオブジェクトなので、着いたときに新しい値になる */
+  const applySky=()=>{
+    if(skyAnim) return;
+    const t=deepOn?BINO_SKY:NAKED_SKY;
+    starUniforms.uMagWhite.value=t.magWhite; starUniforms.uMagLimit.value=t.magLimit; setMilkyWayGain(t.mwGain);
+  };
+  return {
+    defaults:{ STAR_DEFAULTS, BINOCULAR, BLOOM_DEFAULTS },
+    /** STAR_DEFAULTS・BINOCULAR・BLOOM_DEFAULTS にそのまま貼れる形の今の値 */
+    values:()=>({
+      STAR_DEFAULTS:{...STAR, magWhite:NAKED_SKY.magWhite, magLimit:NAKED_SKY.magLimit, mwGain:NAKED_SKY.mwGain},
+      BINOCULAR:{ magWhite:BINO_SKY.magWhite, magLimit:BINO_SKY.magLimit, mwGain:BINO_SKY.mwGain },
+      BLOOM_DEFAULTS:{...BLOOM},
+    }),
+    set(group,key,v){
+      if(group==='STAR_DEFAULTS'){
+        STAR[key]=v;
+        if(key==='magWhite'||key==='magLimit'||key==='mwGain'){ NAKED_SKY[key]=v; applySky(); }
+        else if(key==='peakMax') starUniforms.uPeakMax.value=v;
+        else if(key==='knee') starUniforms.uKnee.value=v;
+        else if(key==='gamma') starUniforms.uGamma.value=v;
+        else if(key==='sigmaFloor'||key==='sigmaPerPx') resize();
+        else if(key==='halo') applyQuality();
+      }else if(group==='BINOCULAR'){ BINO_SKY[key]=v; applySky(); }
+      else if(group==='BLOOM_DEFAULTS'){
+        BLOOM[key]=v;
+        if(bloom){ if(key==='smoothWidth') bloom.highPassUniforms.smoothWidth.value=v; else bloom[key]=v; }
+      }
+    },
+    /** パネルに出す今の状態（調整の対象ではない） */
+    state:()=>({ q:quality.q, bloom:bloomOn(), deep:deepOn, pixelRatio:renderer.getPixelRatio(),
+                 sigma0:starUniforms.uSigmaMin.value, halo:starUniforms.uHalo.value }),
+  };
+}
+if(TUNE) import('./src/tune-panel.mjs').then(m=>m.mountTunePanel(tuneApi()))
+  .catch(e=>console.warn('調整パネルを読み込めませんでした',e));
 
 buildReadout();
 if(VERIFY) verifyInputs();
