@@ -357,7 +357,14 @@ body.verify #hint,body.verify #starload{display:none!important}
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- three.js はリポジトリ内（vendor/three/。npm 配布物そのまま）から ES モジュールで読む。
+     外部の CDN には依存しない。importmap は Chrome 89・Firefox 108・Safari 16.4 以降 -->
+<script type="importmap">
+{ "imports": {
+    "three": "./vendor/three/three.module.js",
+    "three/addons/": "./vendor/three/addons/"
+} }
+</script>
 <script>
 /* file:// では ES モジュールも fetch も読めないので、先に案内を出す（本体は起動しない） */
 if(location.protocol==='file:'){
@@ -370,6 +377,7 @@ if(location.protocol==='file:'){
 /* ============================================================
    1. 天文計算 — src/astro.mjs（テストと共有）
    ============================================================ */
+import * as THREE from 'three';
 import {
   D2R, R2D, AU, sin, cos, norm, julianDay, computeChart,
   SIGNS, GLYPH, IAU, iauConst, BODIES, lonRates, deltaLon
