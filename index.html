@@ -99,9 +99,10 @@ input[type=date],input[type=time]{color-scheme:dark}
 .searchrow{display:flex;gap:8px;align-items:flex-end}
 .searchrow input{flex:1}
 button.go.sm{padding:5px 12px;font-size:10px;white-space:nowrap}
-#qmsg,#tzinfo,#dmsg,#llmsg{font-size:10px;letter-spacing:.06em;color:rgba(223,231,242,.42);
+#qmsg,#tzinfo,#dmsg,#llmsg,#deepmsg{font-size:10px;letter-spacing:.06em;color:rgba(223,231,242,.42);
   min-height:13px;padding-top:4px;line-height:1.5}
-#qmsg.err,#dmsg.err,#llmsg.err{color:#e08a5f}
+#qmsg.err,#dmsg.err,#llmsg.err,#deepmsg.err{color:#e08a5f}
+#deepmsg{margin-top:-8px;padding-bottom:10px}
 #qmsg.ok{color:var(--gold-dim)}
 /* 日時・緯度経度の範囲外メッセージ。出さないときは行ごと畳む（grid の gap を残さない） */
 #dmsg,#llmsg{grid-column:1/-1;min-height:0;padding-top:0}
@@ -322,7 +323,9 @@ body.verify #hint,body.verify #starload{display:none!important}
         <div class="tog on" id="tHoriz"><i></i><span id="tHorizTx">地平線</span></div>
         <div class="tog" id="tReal"><i></i>実際の星座</div>
         <div class="tog on" id="tTrail"><i></i>軌跡</div>
+        <div class="tog" id="tDeep"><i></i><span id="tDeepTx">双眼鏡の空</span></div>
       </div>
+      <div id="deepmsg" hidden></div>
     </details>
     <details class="grp">
       <summary>占星術レイヤー<span class="tag">既定オフ / 天文コアとは別レイヤー</span></summary>
@@ -385,7 +388,7 @@ import {
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { precessionMatrixThree, eclToThree, eclVecToThree } from './src/precession.mjs';
-import { STAR_DEFAULTS, sigmaMin, bvToLinearRGB } from './src/starlight.mjs';
+import { STAR_DEFAULTS, BINOCULAR, sigmaMin, bvToLinearRGB } from './src/starlight.mjs';
 import { zonedToJd, jdToZoned, zoneList, isValidZone, formatOffset } from './src/timezone.mjs';
 import { searchPlace, reasonText } from './src/geocode.mjs';
 /* 占星術レイヤー（P4）。天文コアには手を入れず、その出力を入力として受け取る一方向の依存。
@@ -617,6 +620,69 @@ async function loadStars(){
   }
 }
 const starsLoaded=loadStars();
+
+/* --- 双眼鏡の空（8.0 等までの暗い星。docs/rendering-upgrade.md C.3）---
+   初めてオンにしたときに data/stars-deep.json を読み、2 つ目の点群を starGroup に足す
+   （celestialGroup の子なので歳差は肉眼の段と同じ行列で乗る。マテリアルと uniform も共有）。
+   切り替えでは表示限界と露出を 1.2 秒かけて動かし、星が明るい順に現れるようにする。
+   空はもう見えているので、読み込み中もトグルの文言を変えるだけで画面は隠さない */
+const NAKED_SKY={magWhite:STAR_DEFAULTS.magWhite, magLimit:STAR_DEFAULTS.magLimit};
+let deepOn=false, deepPoints=null, deepCount75=0, deepGen=0, deepReady=Promise.resolve(), skyAnim=null;
+const elDeep=document.getElementById('tDeep'), elDeepTx=document.getElementById('tDeepTx'),
+      elDeepMsg=document.getElementById('deepmsg');
+/** 露出と表示限界を目標へ。prefers-reduced-motion と検証モードでは補間せず即時 */
+function moveSky(to,done){
+  const from={magWhite:starUniforms.uMagWhite.value, magLimit:starUniforms.uMagLimit.value};
+  skyAnim={from,to,t0:performance.now(),dur:(REDUCED||VERIFY)?0:1200,done};
+  stepSky(performance.now());
+}
+function stepSky(now){
+  if(!skyAnim) return;
+  const a=skyAnim, k=a.dur?Math.min(1,(now-a.t0)/a.dur):1;
+  starUniforms.uMagWhite.value=a.from.magWhite+(a.to.magWhite-a.from.magWhite)*k;
+  starUniforms.uMagLimit.value=a.from.magLimit+(a.to.magLimit-a.from.magLimit)*k;
+  if(k>=1){ skyAnim=null; if(a.done) a.done(); }
+}
+async function loadDeep(){
+  const gen=++deepGen;                 // 読み込み中にオフへ戻されたら、届いた結果を採らない
+  elDeepTx.textContent='双眼鏡の空（読み込み中…）';
+  elDeepMsg.hidden=true;
+  try{
+    const r=await fetch('data/stars-deep.json');
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const data=await r.json();
+    await starsLoaded;                 // 肉眼の段を先に足す（starGroup の並びを 肉眼 → 双眼鏡 に保つ）
+    if(gen!==deepGen) return;
+    deepPoints=makeStarPoints(data);
+    for(deepCount75=0; deepCount75<data.count&&data.stars[deepCount75*4+2]<=750; deepCount75++);
+    if(quality.deepCut) deepPoints.geometry.setDrawRange(0,deepCount75);
+    // 検証モードの deepmax=x: 双眼鏡の段を x 等までに絞る（上限 7.5 等と 8.0 等の見比べ用。C.4）
+    const dmax=VERIFY&&QS.has('deepmax')?Number(QS.get('deepmax')):NaN;
+    if(Number.isFinite(dmax)){
+      let n=0; while(n<data.count&&data.stars[n*4+2]<=Math.round(dmax*100)) n++;
+      deepPoints.geometry.setDrawRange(0,n);
+    }
+    starGroup.add(deepPoints);
+    elDeepTx.textContent='双眼鏡の空';
+    if(deepOn) moveSky(BINOCULAR);
+  }catch(e){
+    if(gen!==deepGen) return;
+    deepOn=false; elDeep.classList.remove('on');      // 肉眼の表示はそのまま。次に押したら再試行する
+    elDeepTx.textContent='双眼鏡の空';
+    elDeepMsg.hidden=false; elDeepMsg.className='err';
+    elDeepMsg.textContent='暗い星を読み込めませんでした';
+  }
+}
+function setDeep(v){
+  deepOn=v;
+  if(v){
+    if(deepPoints){ deepPoints.visible=true; moveSky(BINOCULAR); }
+    else deepReady=loadDeep();
+  }else{
+    if(!deepPoints){ deepGen++; elDeepTx.textContent='双眼鏡の空'; return; }   // 読み込み中なら捨てる
+    moveSky(NAKED_SKY,()=>{ if(!deepOn) deepPoints.visible=false; });
+  }
+}
 
 /* --- 天の川（装飾レイヤー） ---
    注意: これは天文データではない。銀河座標系の向き（銀河北極・銀河中心の J2000 値）
@@ -1504,6 +1570,7 @@ function toggle(id,fn){
 toggle('tDist',v=>{useDist=v;placeBodies(false);placeNatal();lastTrailJdUT=null;tR=v?430:300;});
 toggle('tHoriz',v=>{horizGroup.visible=v;});
 toggle('tTrail',v=>{showTrails=v;uiDirty=true;});   // ⌁ 印の出し入れを読み出しに反映
+toggle('tDeep',setDeep);
 zodiacGroup.children.forEach(c=>{if(c.material) c.userData.base=c.material.opacity;});
 toggle('tReal',v=>{realGroup.visible=v;zodiacGroup.children.forEach(c=>{
   if(c.material) c.material.opacity = c.userData.base*(v?0.4:1);});});
@@ -1628,6 +1695,9 @@ const DEGRADE=[
   ()=>{ if(quality.q>0&&quality.scale===1&&renderer.getPixelRatio()>1){ quality.scale=0.75; return true; } },
   ()=>{ if(quality.q===2){ quality.q=1; return true; } },
   ()=>{ if(quality.q===1){ quality.q=0; return true; } },
+  // 双眼鏡の段を 7.5 等まで（16,871 個）に減らす。明るい順に並んでいるので先頭から数えるだけ
+  ()=>{ if(deepPoints&&deepPoints.visible&&!quality.deepCut){
+          quality.deepCut=true; deepPoints.geometry.setDrawRange(0,deepCount75); return true; } },
 ];
 const AUTO_Q=!VERIFY&&Q_FIXED===null;
 const frameMs=[];
@@ -1682,6 +1752,7 @@ let t0=performance.now(), uiAcc=0;
   requestAnimationFrame(loop);
   const now=performance.now(), dt=(now-t0)/1000; t0=now;
   watchFrameTime(dt);
+  stepSky(now);
 
   // 再生（1フレームあたり computeChart 3回 ≒ 59µs）
   if(playing) setTime(curJdUT + SCALES[scale].rate*SPEEDS[speedIdx]*dt, true);
@@ -1722,7 +1793,8 @@ function verifyInputs(){
   if(QS.has('tz')) elTz.value=QS.get('tz');
 }
 function verifyAfterRun(){
-  const TOGS={real:'tReal',astro:'tAstro',dist:'tDist',horiz:'tHoriz',trail:'tTrail'};
+  const TOGS={real:'tReal',astro:'tAstro',dist:'tDist',horiz:'tHoriz',trail:'tTrail',deep:'tDeep'};
+  if(QS.get('deep')==='1'&&!elDeep.classList.contains('on')) elDeep.onclick();   // 双眼鏡の空
   for(const k of (QS.get('tog')||'').split(',')){        // 指定したトグルを「オン」にする
     const el=TOGS[k]&&document.getElementById(TOGS[k]);
     if(el&&!el.classList.contains('on')) el.onclick();
@@ -1748,9 +1820,9 @@ function probe(){
   const lines=g=>g.visible?g.children.filter(o=>o.isLine&&o.visible).map(pts):[];
   return {
     W, H,
-    stars: starGroup.children.map(pts),
+    stars: starGroup.children.filter(o=>o.visible).map(pts),
     // カメラの手前（NDC の z が −1〜1）にある星の番号。重心の検査（G.3 ③）で描かれない星を除くため
-    starsFront: starGroup.children.map(o=>{
+    starsFront: starGroup.children.filter(o=>o.visible).map(o=>{
       const a=o.geometry.attributes.position, out=[];
       for(let i=0;i<a.count;i++){
         v.fromBufferAttribute(a,i).applyMatrix4(o.matrixWorld).project(camera);
@@ -1771,12 +1843,14 @@ if(VERIFY){
   /* ready: 星のデータを読み終え、そのあと2フレーム以上描いたら解決する */
   const frames=n=>new Promise(r=>{ const f=()=>(--n<=0?r():requestAnimationFrame(f)); requestAnimationFrame(f); });
   window.__celestia={
-    ready: starsLoaded.then(ok=>frames(3).then(()=>ok)),
+    ready: starsLoaded.then(ok=>deepReady.then(()=>frames(3)).then(()=>ok)),
     probe,
     info: ()=>({ calls: renderer.info.render.calls, triangles: renderer.info.render.triangles,
                  points: renderer.info.render.points, lines: renderer.info.render.lines,
                  textures: renderer.info.memory.textures, geometries: renderer.info.memory.geometries,
                  q: quality.q, scale: quality.scale, bloom: bloomOn(), floatRT: FLOAT_RT,
+                 deep: deepOn, deepCount: deepPoints?deepPoints.geometry.attributes.position.count:0,
+                 magWhite: starUniforms.uMagWhite.value, magLimit: starUniforms.uMagLimit.value,
                  maxPointSize: starUniforms.uMaxPointSize.value, sigmaMin: starUniforms.uSigmaMin.value })
   };
 }

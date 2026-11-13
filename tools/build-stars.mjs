@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 /**
- * build-stars.mjs — HYG database から data/stars.json を生成するビルドスクリプト
+ * build-stars.mjs — HYG database から星のデータを 2 段に分けて生成するビルドスクリプト
+ *
+ *   data/stars.json       肉眼の段   等級 ≤ 6.5         起動時に読む
+ *   data/stars-deep.json  双眼鏡の段 6.5 < 等級 ≤ 8.0   「双眼鏡の空」を初めてオンにしたときに読む
+ *
+ * 境界は丸める前の等級で切るので、2 つの段は重ならず抜けもない（docs/rendering-upgrade.md C.1）。
+ * 肉眼の段は 2 段化の前とバイト単位で同じものを出す（SHA-256 180cc81a…0185）。
  *
  * ソース: astronexus/HYG-Database v4.1 (CC BY-SA 4.0)
  * 実行:   node tools/build-stars.mjs
@@ -17,7 +23,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 export const HYG_URL =
   'https://raw.githubusercontent.com/astronexus/HYG-Database/main/hyg/CURRENT/hygdata_v41.csv';
-export const MAG_LIMIT = 6.5;
+export const MAG_LIMIT = 6.5;   // 肉眼の段の上限
+export const DEEP_LIMIT = 8.0;  // 双眼鏡の段の上限（C.4。銀河面で 8.0 等を超えると収録の抜けが大きい）
 export const CI_FALLBACK = 0.63; // ci 欠損星の代替値（等級6.5以下 8,880星の平均 B-V）
 export const OBLIQUITY = 23.4392911; // 黄道傾斜角 ε (J2000)
 
@@ -83,24 +90,26 @@ async function build() {
   const header = parseCsvLine(lines[0]);
   const col = Object.fromEntries(header.map((h, i) => [h.replace(/"/g, ''), i]));
 
-  const stars = [];
-  let missingCi = 0;
+  const stars = [], deep = [];
+  let missingCi = 0, missingCiDeep = 0;
   for (let i = 1; i < lines.length; i++) {
     if (!lines[i]) continue;
     const f = parseCsvLine(lines[i]);
     const id = Number(f[col.id]);
     if (id === 0) continue; // Sol（太陽）は天体計算側で扱うので除外
     const mag = Number(f[col.mag]);
-    if (!(mag <= MAG_LIMIT)) continue;
+    if (!(mag <= DEEP_LIMIT)) continue;
+    const naked = mag <= MAG_LIMIT;
     const ra = Number(f[col.ra]);
     const dec = Number(f[col.dec]);
     let ci = f[col.ci] === '' ? NaN : Number(f[col.ci]);
-    if (Number.isNaN(ci)) { ci = CI_FALLBACK; missingCi++; }
+    if (Number.isNaN(ci)) { ci = CI_FALLBACK; if (naked) missingCi++; else missingCiDeep++; }
     const { lon, lat } = equatorialToEcliptic(ra, dec);
-    stars.push([Math.round(lon * 1000), Math.round(lat * 1000),
+    (naked ? stars : deep).push([Math.round(lon * 1000), Math.round(lat * 1000),
                 Math.round(mag * 100), Math.round(ci * 100)]);
   }
   stars.sort((a, b) => a[2] - b[2]); // 明るい順
+  deep.sort((a, b) => a[2] - b[2]);  // 双眼鏡の段も明るい順（setDrawRange で暗い側から落とせる）
 
   const out = {
     source: 'HYG v4.1 (astronexus/HYG-Database)',
@@ -122,6 +131,26 @@ async function build() {
               `${missingCi} missing ci -> ${CI_FALLBACK}, ${kb} KB`);
   if (statSync(outPath).size > 200 * 1024) {
     throw new Error(`stars.json exceeds 200KB target: ${kb} KB`);
+  }
+
+  const outDeep = {
+    source: out.source,
+    license: out.license,
+    frame: out.frame,
+    magFloor: MAG_LIMIT,          // この等級より暗い星だけ（肉眼の段とは重ならない）
+    magLimit: DEEP_LIMIT,
+    ciFallback: CI_FALLBACK,
+    fields: out.fields,
+    count: deep.length,
+    stars: deep.flat()
+  };
+  const deepPath = join(outDir, 'stars-deep.json');
+  writeFileSync(deepPath, JSON.stringify(outDeep));
+  const kbDeep = (statSync(deepPath).size / 1024).toFixed(1);
+  console.log(`wrote ${deepPath}: ${outDeep.count} stars (${MAG_LIMIT}<mag<=${DEEP_LIMIT}), ` +
+              `${missingCiDeep} missing ci -> ${CI_FALLBACK}, ${kbDeep} KB`);
+  if (statSync(deepPath).size > 700 * 1024) {
+    throw new Error(`stars-deep.json exceeds 700KB target: ${kbDeep} KB`);
   }
 }
 
