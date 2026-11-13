@@ -15,6 +15,7 @@
  *   フォントの到着の前後で字形を変えるため。G.2）。移行前の three.js（cdnjs の r128）だけは、
  *   バイト単位で同一の npm 配布物（tools/.cache/three/0.128.0）で応答する
  * - --three DIR を付けると /vendor/three/ への要求を DIR から返す（途中の版の検証用）
+ * - --page FILE で index.html 以外のページを撮る（検証用の一時ページ）。--wait MS で撮る前に待つ
  */
 import { createServer } from 'node:http';
 import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync } from 'node:fs';
@@ -105,7 +106,7 @@ async function main() {
           return route.abort();
         });
         const q = `verify=1&seed=1&${CONDITIONS[condKey]}${o.extra ? '&' + o.extra : ''}`;
-        await page.goto(`${base}index.html?${q}`);
+        await page.goto(`${base}${o.page || 'index.html'}?${q}`);
         const ok = await page.evaluate(() => window.__celestia.ready);
         if (!ok) throw new Error(`${condKey}/${sizeKey}: 星のデータを読めなかった`);
         if (o.wait) await page.evaluate(ms => new Promise(r => setTimeout(r, ms)), Number(o.wait));

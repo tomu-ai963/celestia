@@ -411,10 +411,15 @@ const rand=(()=>{
    ============================================================ */
 const cv=document.getElementById('sky');
 const renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true});
-/* r152 以降は色管理が既定でオン。移行の段階（S3）では r128 と同じ旧来の扱いに固定し、
-   見た目が 1 画素も変わらないことを確かめてから切り替える（docs/rendering-upgrade.md A.4） */
-THREE.ColorManagement.enabled=false;
-renderer.outputColorSpace=THREE.LinearSRGBColorSpace;
+/* 色管理は three.js の既定（オン・出力 sRGB）のまま使う。色の値は「sRGB の値」として書いてあるので、
+   頂点色はバッファへ入れる前に線形へ直し（srgbToLinear）、キャンバスのテクスチャには
+   colorSpace=SRGBColorSpace を付ける。自前シェーダの星と天の川は出力の変換を含めていないので、
+   色の値は今までと同じ意味のまま（docs/rendering-upgrade.md A.2 の 3a〜3c） */
+const _lin=new THREE.Color();
+/** sRGB の値 (0〜1) を線形にして [r,g,b] で返す */
+function srgbToLinear(r,g,b){ _lin.setRGB(r,g,b,THREE.SRGBColorSpace); return _lin; }
+/** 16 進の色を sRGB の値 (0〜1) の [r,g,b] にする（色管理を通さない） */
+const hexToSRGB=hex=>[((hex>>16)&255)/255, ((hex>>8)&255)/255, (hex&255)/255];
 /* 半透明の物を描く順番を r151 までと同じにする。
    r152 から three.js は並べる奥行きに「ジオメトリの外接球の中心」を使う。この天球では線・星・
    天の川がすべて原点に置かれていて、以前は奥行きが等しく作った順（id 順）に描かれていた。
@@ -631,6 +636,7 @@ function label(text,size,color,op){
   ctx.letterSpacing='14px';
   ctx.fillText(text,256,64);
   const t=new THREE.CanvasTexture(c);
+  t.colorSpace=THREE.SRGBColorSpace;
   const s=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true,opacity:op,depthTest:false}));
   s.scale.set(size*4,size,1);
   return s;
@@ -762,15 +768,17 @@ aspLines.frustumCulled=false; astroGroup.add(aspLines);
 /* --- 天体 --- */
 function glowTex(hex){
   const c=document.createElement('canvas');c.width=c.height=128;
-  const ctx=c.getContext('2d');const col=new THREE.Color(hex);
+  const ctx=c.getContext('2d');
   const g=ctx.createRadialGradient(64,64,0,64,64,64);
-  const rgb=`${(col.r*255)|0},${(col.g*255)|0},${(col.b*255)|0}`;
+  const rgb=`${(hex>>16)&255},${(hex>>8)&255},${hex&255}`;   // CSS の色なので sRGB の値のまま
   g.addColorStop(0,'rgba(255,255,255,1)');
   g.addColorStop(.14,`rgba(${rgb},1)`);
   g.addColorStop(.34,`rgba(${rgb},.42)`);
   g.addColorStop(1,`rgba(${rgb},0)`);
   ctx.fillStyle=g;ctx.fillRect(0,0,128,128);
-  return new THREE.CanvasTexture(c);
+  const t=new THREE.CanvasTexture(c);
+  t.colorSpace=THREE.SRGBColorSpace;
+  return t;
 }
 const bodyGroup=new THREE.Group(); scene.add(bodyGroup);
 const rayGroup=new THREE.Group(); scene.add(rayGroup);
@@ -866,9 +874,9 @@ function placeNatal(){
 }
 
 /* --- 占星術レイヤーの更新（オンのときだけ呼ばれる） --- */
-const ASPECT_COLORS=new Map();
+const ASPECT_COLORS=new Map();          // 16 進 → sRGB の値 [r,g,b]
 const colorOf=hex=>{ let c=ASPECT_COLORS.get(hex);
-  if(!c){ c=new THREE.Color(hex); ASPECT_COLORS.set(hex,c); } return c; };
+  if(!c){ c=hexToSRGB(hex); ASPECT_COLORS.set(hex,c); } return c; };
 /** 黄道傾斜角から決まる極圏。ここを超えると「東の地平線」という言い方が成立しない */
 const POLAR_CIRCLE=66.56;
 function updateAstro(){
@@ -902,8 +910,9 @@ function updateAstro(){
     // 天体の実位置ではなく「その黄経の黄道面上の点」を結ぶ（アスペクトは黄経の関係）
     const pa=eclLL(chart[a.a].lon,0,WHEEL_R*0.97), pb=eclLL(chart[a.b].lon,0,WHEEL_R*0.97);
     const c=colorOf(a.color), k=0.14+0.62*a.tightness;   // オーブが狭いほど明るい
-    pos.setXYZ(n,pa.x,pa.y,pa.z); col.setXYZ(n,c.r*k,c.g*k,c.b*k); n++;
-    pos.setXYZ(n,pb.x,pb.y,pb.z); col.setXYZ(n,c.r*k,c.g*k,c.b*k); n++;
+    const l=srgbToLinear(c[0]*k,c[1]*k,c[2]*k);          // sRGB の値で暗くしてから線形へ
+    pos.setXYZ(n,pa.x,pa.y,pa.z); col.setXYZ(n,l.r,l.g,l.b); n++;
+    pos.setXYZ(n,pb.x,pb.y,pb.z); col.setXYZ(n,l.r,l.g,l.b); n++;
   }
   pos.needsUpdate=true; col.needsUpdate=true; aspGeo.setDrawRange(0,n);
   showAstroNote();
@@ -987,16 +996,18 @@ function rebuildTrails(){
     if(trailAliased(b)){ o.visible=false; return; }
     const pos=o.geometry.attributes.position.array;
     const col=o.geometry.attributes.color.array;
-    const base=new THREE.Color(b.c);
+    const base=hexToSRGB(b.c);                       // sRGB の値
     let n=0;
     for(let i=0;i<TRAIL_N-1;i++){
       const p0=samples[i][b.k], p1=samples[i+1][b.k];
       const a=bodyVec(p0), c=bodyVec(p1);
       const back=deltaLon(p0.lon,p1.lon)<0;          // 0°/360°を考慮した差分
       const age=0.10+0.90*(i/(TRAIL_N-2));           // 古いほど暗く
-      const cr=(back?1.00:base.r*0.70)*age,
-            cg=(back?0.42:base.g*0.70)*age,
-            cb=(back?0.28:base.b*0.70)*age;
+      // 色は sRGB の値で組み立て（逆行色のリテラルも sRGB）、バッファへは線形にして書く
+      const l=srgbToLinear((back?1.00:base[0]*0.70)*age,
+                           (back?0.42:base[1]*0.70)*age,
+                           (back?0.28:base[2]*0.70)*age);
+      const cr=l.r, cg=l.g, cb=l.b;
       pos[n*3]=a.x;pos[n*3+1]=a.y;pos[n*3+2]=a.z;
       col[n*3]=cr;col[n*3+1]=cg;col[n*3+2]=cb;n++;
       pos[n*3]=c.x;pos[n*3+1]=c.y;pos[n*3+2]=c.z;
