@@ -3,7 +3,9 @@
 出生の日時と場所から、その瞬間の空を3Dで再構成する天文ビューア。
 占い的な解釈は持たず、**天体が実際にどこにいたか**だけを描く。
 
-依存は three.js (r128, CDN) のみ。ES モジュールと `data/*.json` の fetch を使うため、
+依存は three.js（r187）のみ。npm の配布物そのままを `vendor/three/` に同梱し、importmap で
+ES モジュールとして読む（外部 CDN は使わない。importmap に対応する Chrome 89・Firefox 108・
+Safari 16.4 以降が対象）。ES モジュールと `data/*.json` の fetch を使うため、
 表示にはローカルHTTPサーバーが必要（下記「ローカル確認」参照）。
 
 ---
@@ -24,9 +26,12 @@
 | 座標変換 | 黄道直交座標 → three.js 座標は `(x, z, -y)` で統一 |
 | 地平線 | GMST → 地方恒星時 → 天頂ベクトルを黄道座標に変換し、直交する大円を描画 |
 | 星野 | HYG v4.1 実データ 8,920星（等級6.5以下）。ビルド時に黄道座標へ変換・JSON化（178KB / gzip 78KB） |
+| 双眼鏡の空 | 6.5 < 等級 ≤ 8.0 の 32,567星（`data/stars-deep.json`、647KB / gzip 282KB）を、トグルを初めてオンにしたときに読む。露出と表示限界を 1.2 秒かけて動かし、星が明るい順に現れる |
+| 星の描き方 | 等級から Pogson の式のフラックスを求め、最小の幅のガウス像で明るさだけを変える（明るい星はピークを頭打ちにして面積で受け、総光量を保つ）。色は B−V → 有効温度 → 黒体の色度 → 線形 sRGB で、輝度を 1 にそろえる（`src/starlight.mjs`） |
+| HDR | 星と天の川を半精度浮動小数のレンダーターゲットへ足し込み、ブルーム → トーンカーブ（0.75 まで恒等）→ sRGB → ディザで画面へ。線・ラベル・天体はその上に今までの経路で重ねる。浮動小数の RT に描けない端末や重い端末は品質の段階（Q2 → Q1 → Q0）を自動で落とす（`?q=0〜2` で固定） |
 | 星座線 | Stellarium western skyculture の HIP ポリラインを HYG と照合して座標解決。黄道12星座はゴールドで強調、他76星座は暗く描画 |
 | 歳差 | IAU2006 の一般歳差 p_A + 黄道面の移動を含む3回転（Meeus 21.3）。星野側の親グループと惑星側が同じ行列を共有 |
-| 天の川 | 銀河座標系の向きだけ正確な手続き生成の装飾レイヤー（銀緯ガウス減衰・銀河中心側が明るい非対称）。**天文データではない** |
+| 天の川 | NASA SVS「Deep Star Maps 2020」の、明るい星（Hipparcos・Tycho）を除いた天の川の背景（銀河座標の正距円筒）。銀河座標の格子の球に貼り、頂点に (u, v) を直接持たせる（`src/galactic.mjs`）。画像は PC 4096px（422KB）、スマホ 2048px（145KB）の WebP |
 | 時間軸 | 時/日/月/年のスケール切替、再生・速度（±1〜64倍）・スクラブ・出生時刻へのリセット。範囲は 1800–2050 |
 | 逆行 | 黄経の中心差分（0°/360°のラップ考慮）で判定。読み出しとカードに ℞ 表示、軌跡の逆行区間をオレンジで色分け |
 | トランジット | 出生図の天体位置を薄いマーカーで残し、現在位置との黄経差をカードに表示（解釈は持たない） |
@@ -48,7 +53,7 @@
 | 月 | **分点 of-date** | Meeus, *Astronomical Algorithms* 2nd ed. ch.47（"referenced to mean equinox of date"） | そのまま |
 | 月の平均交点・平均リリス | **分点 of-date** | 平均軌道要素の定義そのもの（Meeus ch.47 / 22） | そのまま |
 | 天頂ベクトル（地平線） | **分点 of-date** | GMST（IAU 1982）＋ 平均黄道傾斜角 ε（Meeus 22.2） | そのまま |
-| 星野・星座線・IAU境界・天の川 | **J2000**（ビルド時に固定） | HYG v4.1 / Stellarium（いずれも J2000） | `celestialGroup.matrix` に同じ変換行列を入れて回す |
+| 星野・星座線・IAU境界・天の川 | **J2000**（ビルド時に固定） | HYG v4.1 / Stellarium / NASA SVS（銀河座標は Hipparcos の定義。いずれも J2000） | `celestialGroup.matrix` に同じ変換行列を入れて回す |
 
 歳差量は IAU2006 の一般歳差 **p_A = 5028.796195″ × T + 1.1054348″ × T²**
 （Capitaine, Wallace & Chapront 2003, A&A 412, 567 — https://doi.org/10.1051/0004-6361:20031539 ）。
@@ -369,7 +374,14 @@ setInterpreter(async keys => await fetch('/my/texts.json').then(r => r.json()));
 ### 運用
 - [ ] GitHub Pages で公開
 - [ ] OGP画像を天球のスクリーンショットから自動生成
-- [ ] three.js を CDN からローカルバンドルへ（オフライン動作）
+- [x] three.js を CDN からローカルバンドルへ（`vendor/three/` に r187 の配布物をそのまま置き、importmap で読む）
+
+### 描画の改善（docs/rendering-upgrade.md）
+- [x] three.js r128 → r187（読み込み・API・色管理を段階ごとに移し、各段階で画素単位の一致を確認）
+- [x] HDR・トーンカーブ・ブルームと品質の段階（Q0・Q1・Q2）
+- [x] 星データの 2 段化（双眼鏡の空、8.0 等まで）
+- [x] 天の川を NASA SVS の画像に差し替え
+- [ ] ブルーム・露出・天の川の明るさの実機での調整（スマホ）
 
 ---
 
@@ -380,9 +392,23 @@ setInterpreter(async keys => await fetch('/my/texts.json').then(r => r.json()));
 ```sh
 npm run build   # HYG v4.1 と Stellarium western skyculture をダウンロードして
                 # data/stars.json と data/constellations.json を生成（tools/.cache にキャッシュ）
-npm test        # 70件。ネットワーク不要（Horizons の値はフィクスチャから読む）
+npm test        # 89件。ネットワーク不要（Horizons の値はフィクスチャから読む）
 npm run fetch:horizons   # 検証用フィクスチャの再取得（これだけは API を叩く）
+node tools/build-milkyway.mjs   # 天の川の画像を NASA SVS の EXR（約 33MB、tools/.cache に置く）から作り直す
 ```
+
+描画の検証（`npm test` には入れていない。Playwright の Chromium を SwiftShader で動かす）:
+
+```sh
+npx playwright install chromium            # 初回だけ
+npm run verify:shoot -- --out tests/visual/out/now           # 固定条件 V1〜V3 を 2 サイズで撮る
+npm run verify:compare -- tests/visual/baseline tests/visual/out/now --probe-only   # 星・線・天体の位置を移行前と比べる
+node tools/check-centroids.mjs tests/visual/out/sky          # layers=sky で撮った画面の星の重心
+```
+
+撮影は `index.html?verify=1` の検証モードを使う（自動回転・補間を止め、`d` `t` `lat` `lon` `tz` `cam` `tog`
+`layers` `q` `bloom` `deep` `deepmax` `mw` `debug=mw` で条件を固定する）。`tests/visual/baseline/` は
+移行前（r128）の位置データ。画像は機械に依存するのでコミットしない。
 
 テストの内訳:
 
@@ -395,7 +421,10 @@ npm run fetch:horizons   # 検証用フィクスチャの再取得（これだ�
 | `precession.test.mjs` | 8 | 3D側の見た目と数値変換の一致 / ベクトル版と角度版の一致 / 逆変換 / p_A の係数 |
 | `timezone.test.mjs` | 10 | 日本1948–51夏時間 / 米国戦時DST / 地方平均時 / 往復 / 存在しない・重複する時刻 |
 | `retrograde.test.mjs` | 9 | 水星の留（公表値±1日）/ 0°境界 / 刻み幅への非依存 / 全範囲の健全性 |
-| `stars.test.mjs` `constellations.test.mjs` | 6 | 座標変換（4恒星 ±0.1°）/ データ形式とサイズ |
+| `stars.test.mjs` `constellations.test.mjs` | 9 | 座標変換（4恒星 ±0.1°）/ データ形式とサイズ / 双眼鏡の段の範囲・並び・サイズ・肉眼の段と重ならないこと / `stars.json` の SHA-256 |
+| `starlight.test.mjs` | 8 | 等級 → フラックス・ピーク・幅・画面の値、総光量の保存、トーンカーブ、B−V → 色（設計書の表の値） |
+| `vendor.test.mjs` | 2 | `vendor/three/` のファイルが three@0.187.0 の配布物と同じ（`SHA256SUMS` と、あれば `node_modules/three`） |
+| `galactic.test.mjs` | 6 | 銀河座標の基準点（銀河中心・マゼラン雲・M31 など）の座標と (u, v)、回転行列、星と同じ経路との一致、球のメッシュの向き |
 | `astrology.test.mjs` | 18 | ASC が地平線上・昇る側・東半分 / MC の時角と子午線通過高度 / ハウス3方式 / プラシーダスの半弧3等分と高緯度でのフォールバック / アスペクトが黄経のみ・接近分離 / 解釈スタブ / **天文コアが占星術を知らないこと** |
 
 天文計算・歳差・タイムゾーンは `src/` にあり、`index.html`（ESモジュール）とテストが
@@ -467,10 +496,13 @@ python -m http.server 8000    # http://localhost:8000
   （年スケールの月・水星・金星など）は折り返しを表現できないので描画しない
 - 出生位置マーカーはその日の黄道座標（トロピカル）のまま置いており、歳差ぶんの
   座標系の違いは補正していない（サイン上の位置を比べる用途に合わせたため）
-- 天の川は**装飾レイヤー**であり天文データではない。銀河座標系の向き（銀河北極・銀河中心の
-  J2000 値）だけを正確に再現した手続き生成の点群で、HYG 実星野とは別物
-- 星の色は B-V → 色温度（Ballesteros近似）→ 黒体色 の近似変換。ci 欠損の40星は
-  カタログ平均値 0.63 で代替
+- 天の川は NASA SVS の画像（Gaia DR2 などの暗い星から作った観測データの派生物）を、
+  配信の容量に収めるため約 0.1° ぼかしている。明るさは見やすさのため物理的な目安の約 2 倍
+  （実機で調整する）。画像の中の星（Gaia の暗い星）と、自前で描く 8.0 等までの星は重ならない
+- 星の色は B-V → 有効温度（Ballesteros 2012）→ 黒体軌跡の色度（Kang et al. 2002）→ 線形 sRGB の
+  近似変換で、輝度は 1 にそろえる。ci 欠損の星（肉眼の段 40、双眼鏡の段 72）はカタログ平均値 0.63 で代替
+- 双眼鏡の段（8.0 等まで）は、HYG の収録が銀河面で 7.5 等あたりから少し欠ける
+  （銀河面と周りの密度の比が、明るい側の 1.32〜1.34 に対して 7.5〜8.0 等で 1.30。docs/rendering-upgrade.md C.4）
 - 歳差は天球固定レイヤー（星野・星座線・IAU境界・天の川）全体に IAU2006 の p_A と
   黄道面の移動（π_A, Π_A）を含む変換行列を適用する。恒星の固有運動・章動・極運動は
   反映しない
