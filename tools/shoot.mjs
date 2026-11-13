@@ -31,8 +31,13 @@ export const CONDITIONS = {
   V2: 'd=2000-01-01&t=12:00&lat=0&lon=0&tz=UTC&cam=-1.5156,1.4742,60',
   V3: 'd=1800-07-01&t=00:00&lat=64.15&lon=-21.94&tz=UTC&cam=1.3735,0.8791,1350&tog=real,astro',
   // 銀河面の比較（双眼鏡の空）。いて座（銀河中心のそば）とはくちょう座（デネブのそば）を中央に置く
-  GSGR: 'd=2000-01-01&t=12:00&lat=0&lon=0&tz=UTC&cam=-1.5156,1.4742,300',
+  GSGR: 'd=2000-01-01&t=12:00&lat=0&lon=0&tz=UTC&cam=-1.5156,1.4742,1350',
   GCYG: 'd=2000-01-01&t=12:00&lat=0&lon=0&tz=UTC&cam=-2.7110,2.6164,300',
+  // 天の川の基準点（D.5）を中央に置く。θ = π − λ、φ = π/2 + β（λ, β は J2000 の黄道座標）
+  MWGC: 'd=2000-01-01&t=12:00&lat=0&lon=0&tz=UTC&cam=-1.5156,1.4742,1350',
+  MWLMC: 'd=2000-01-01&t=12:00&lat=0&lon=0&tz=UTC&cam=-2.3127,0.0811,1350',
+  MWM31: 'd=2000-01-01&t=12:00&lat=0&lon=0&tz=UTC&cam=2.6555,2.1529,1350',
+  MWCRUX: 'd=2000-01-01&t=12:00&lat=0&lon=0&tz=UTC&cam=-0.7308,0.6479,1350',
 };
 export const SIZES = {
   desktop: { width: 1280, height: 720, deviceScaleFactor: 1 },
@@ -105,7 +110,7 @@ async function main() {
           entry.blocked.push(u);
           return route.abort();
         });
-        const q = `verify=1&seed=1&${CONDITIONS[condKey]}${o.extra ? '&' + o.extra : ''}`;
+        const q = `verify=1&${CONDITIONS[condKey]}${o.extra ? '&' + o.extra : ''}`;
         await page.goto(`${base}${o.page || 'index.html'}?${q}`);
         try {
           await page.waitForFunction(() => window.__celestia, null, { timeout: 15000 });

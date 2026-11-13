@@ -18,6 +18,8 @@
     "@resvg/resvg-js": "^2.6.2",
     "opentype.js": "^2.0.0",
     "playwright": "^1.65.0",
-    "pngjs": "^7.0.0"
+    "pngjs": "^7.0.0",
+    "sharp": "^0.35.5",
+    "three": "^0.187.0"
   }
 }

@@ -1,0 +1,40 @@
+{
+  "source": "NASA SVS Deep Star Maps 2020 (ID 4851), milkyway_2020_4k_gal.exr",
+  "sourceUrl": "https://svs.gsfc.nasa.gov/vis/a000000/a004800/a004851/milkyway_2020_4k_gal.exr",
+  "sourceSha256": "fad63b36aa632c691d521cd9d8b828de9d29b4c2784276eec44e54c6cb159a49",
+  "projection": "galactic plate carrée; center l=0 b=0; l increases to the left; top row b=+90",
+  "processing": {
+    "blurSigmaPx4096": 1.2,
+    "floorPercentile": 0.01,
+    "floor": 0.00170314,
+    "max": 1,
+    "p9999": 0.957176,
+    "maxOverP9999": 1.045,
+    "outlierRatio": 2,
+    "white": "max",
+    "whiteValue": 1,
+    "scale": 1.00171,
+    "clippedFraction": 0,
+    "encoding": "sRGB 8-bit, triangular dither ±1 LSB (seeded)",
+    "webpQuality": 85
+  },
+  "bulgePeak": 0.810381,
+  "bulgeAt": {
+    "l": 2.11,
+    "b": -2.99
+  },
+  "files": {
+    "2048": {
+      "file": "assets/sky/milkyway-2048.webp",
+      "width": 2048,
+      "height": 1024,
+      "bytes": 148748
+    },
+    "4096": {
+      "file": "assets/sky/milkyway-4096.webp",
+      "width": 4096,
+      "height": 2048,
+      "bytes": 432208
+    }
+  }
+}

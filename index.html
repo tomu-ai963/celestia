@@ -212,6 +212,10 @@ button.go:hover{background:var(--gold);color:var(--void)}
   white-space:pre-line}
 #cdInterp.none{color:rgba(223,231,242,.3);font-size:10px;line-height:1.6}
 #cdInterp[hidden]{display:none}
+/* 出典（天の川の画像・星のデータ）。読める大きさで、ただし目立たせない */
+#credits{font-size:9px;line-height:1.7;letter-spacing:.03em;color:rgba(223,231,242,.42);padding:0 0 14px;
+  max-width:640px}
+#credits p+p{margin-top:6px}
 
 @media (max-width:720px){
   #timebar{gap:7px;padding-bottom:12px}
@@ -357,6 +361,16 @@ body.verify #hint,body.verify #starload{display:none!important}
         <div id="astroNote"></div>
       </div>
     </details>
+    <details class="grp">
+      <summary>出典</summary>
+      <div id="credits">
+        <p>天の川: NASA SVS「Deep Star Maps 2020」の天の川の背景（明るい星を除いた層。ぼかし・明るさの調整を加えています）<br>
+          NASA/Goddard Space Flight Center Scientific Visualization Studio. Gaia DR2: ESA/Gaia/DPAC. Constellation figures based on those developed for the IAU by Alan MacRobert of Sky and Telescope magazine (Roger Sinnott and Rick Fienberg).<br>
+          元データ: Hipparcos Catalogue, Tycho Catalogue (Tycho 2 Catalogue), UCAC3, Gaia DR2 (Data Release 2) — Credit: Gaia team/ESA</p>
+        <p>恒星: HYG Database v4.1（David Nash / The Astronomy Nexus, CC BY-SA 4.0）。
+          星座線: Stellarium sky cultures「Western」（CC BY-SA）。詳しくは data/ATTRIBUTION.md</p>
+      </div>
+    </details>
   </div>
 </div>
 
@@ -389,6 +403,7 @@ import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { precessionMatrixThree, eclToThree, eclVecToThree } from './src/precession.mjs';
 import { STAR_DEFAULTS, BINOCULAR, sigmaMin, bvToLinearRGB } from './src/starlight.mjs';
+import { galacticSphere, galToThree, equatorialToGalactic, REFERENCE_POINTS } from './src/galactic.mjs';
 import { zonedToJd, jdToZoned, zoneList, isValidZone, formatOffset } from './src/timezone.mjs';
 import { searchPlace, reasonText } from './src/geocode.mjs';
 /* 占星術レイヤー（P4）。天文コアには手を入れず、その出力を入力として受け取る一方向の依存。
@@ -399,18 +414,10 @@ import {
 } from './src/astrology.mjs';
 
 /* 検証モード（docs/rendering-upgrade.md G.2）。問い合わせ文字列で条件を固定する。
-   何も付けなければ今までと同じ動きをする（自動回転・補間・乱数はそのまま） */
+   何も付けなければ今までと同じ動きをする（自動回転・補間はそのまま） */
 const QS=new URLSearchParams(location.search);
 const VERIFY=QS.get('verify')==='1';
 if(VERIFY) document.body.classList.add('verify');
-/** seed=n があれば種つきの乱数（mulberry32）、なければ Math.random そのもの */
-const rand=(()=>{
-  const s=QS.get('seed'); if(s===null||!/^\d+$/.test(s)) return Math.random;
-  let a=Number(s)>>>0;
-  return ()=>{ a=(a+0x6D2B79F5)>>>0; let t=a;
-    t=Math.imul(t^(t>>>15),t|1); t^=t+Math.imul(t^(t>>>7),t|61);
-    return ((t^(t>>>14))>>>0)/4294967296; };
-})();
 
 /* ============================================================
    2. 3D 天球
@@ -460,15 +467,6 @@ function eclLL(lon,lat,r){const v=eclToThree(lon,lat,r);return new THREE.Vector3
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* --- 星野 --- */
-function starTex(){
-  const c=document.createElement('canvas');c.width=c.height=64;
-  const g=c.getContext('2d').createRadialGradient(32,32,0,32,32,32);
-  g.addColorStop(0,'rgba(255,255,255,1)');g.addColorStop(.25,'rgba(255,255,255,.7)');
-  g.addColorStop(1,'rgba(255,255,255,0)');
-  const ctx=c.getContext('2d');ctx.fillStyle=g;ctx.fillRect(0,0,64,64);
-  return new THREE.CanvasTexture(c);
-}
-const SPR=starTex();   // 手続き生成の天の川のスプライト（自前シェーダ専用なので colorSpace は付けない）
 
 /* --- 星の明るさ・大きさ・色（docs/rendering-upgrade.md B.2〜B.4）---
    等級はそのまま属性 aMag で渡し、Pogson の式のフラックス → ピークと幅 → ガウス像を頂点・
@@ -626,13 +624,15 @@ const starsLoaded=loadStars();
    （celestialGroup の子なので歳差は肉眼の段と同じ行列で乗る。マテリアルと uniform も共有）。
    切り替えでは表示限界と露出を 1.2 秒かけて動かし、星が明るい順に現れるようにする。
    空はもう見えているので、読み込み中もトグルの文言を変えるだけで画面は隠さない */
-const NAKED_SKY={magWhite:STAR_DEFAULTS.magWhite, magLimit:STAR_DEFAULTS.magLimit};
+/* 肉眼と双眼鏡の空の、露出・表示限界・天の川の明るさ（銀河中心のふくらみの線形の値。D.7・H-3） */
+const NAKED_SKY={magWhite:STAR_DEFAULTS.magWhite, magLimit:STAR_DEFAULTS.magLimit, mwGain:0.03};
+const BINO_SKY={magWhite:BINOCULAR.magWhite, magLimit:BINOCULAR.magLimit, mwGain:0.06};
 let deepOn=false, deepPoints=null, deepCount75=0, deepGen=0, deepReady=Promise.resolve(), skyAnim=null;
 const elDeep=document.getElementById('tDeep'), elDeepTx=document.getElementById('tDeepTx'),
       elDeepMsg=document.getElementById('deepmsg');
 /** 露出と表示限界を目標へ。prefers-reduced-motion と検証モードでは補間せず即時 */
 function moveSky(to,done){
-  const from={magWhite:starUniforms.uMagWhite.value, magLimit:starUniforms.uMagLimit.value};
+  const from={magWhite:starUniforms.uMagWhite.value, magLimit:starUniforms.uMagLimit.value, mwGain:mwGainNow};
   skyAnim={from,to,t0:performance.now(),dur:(REDUCED||VERIFY)?0:1200,done};
   stepSky(performance.now());
 }
@@ -641,6 +641,7 @@ function stepSky(now){
   const a=skyAnim, k=a.dur?Math.min(1,(now-a.t0)/a.dur):1;
   starUniforms.uMagWhite.value=a.from.magWhite+(a.to.magWhite-a.from.magWhite)*k;
   starUniforms.uMagLimit.value=a.from.magLimit+(a.to.magLimit-a.from.magLimit)*k;
+  setMilkyWayGain(a.from.mwGain+(a.to.mwGain-a.from.mwGain)*k);
   if(k>=1){ skyAnim=null; if(a.done) a.done(); }
 }
 async function loadDeep(){
@@ -664,7 +665,7 @@ async function loadDeep(){
     }
     starGroup.add(deepPoints);
     elDeepTx.textContent='双眼鏡の空';
-    if(deepOn) moveSky(BINOCULAR);
+    if(deepOn) moveSky(BINO_SKY);
   }catch(e){
     if(gen!==deepGen) return;
     deepOn=false; elDeep.classList.remove('on');      // 肉眼の表示はそのまま。次に押したら再試行する
@@ -676,7 +677,7 @@ async function loadDeep(){
 function setDeep(v){
   deepOn=v;
   if(v){
-    if(deepPoints){ deepPoints.visible=true; moveSky(BINOCULAR); }
+    if(deepPoints){ deepPoints.visible=true; moveSky(BINO_SKY); }
     else deepReady=loadDeep();
   }else{
     if(!deepPoints){ deepGen++; elDeepTx.textContent='双眼鏡の空'; return; }   // 読み込み中なら捨てる
@@ -684,66 +685,71 @@ function setDeep(v){
   }
 }
 
-/* --- 天の川（装飾レイヤー） ---
-   注意: これは天文データではない。銀河座標系の向き（銀河北極・銀河中心の J2000 値）
-   だけを正確に再現した手続き生成の点群で、HYG 実データの星野（starGroup）とは
-   明確に別レイヤー。実星野より背面（半径大きめ）かつ淡く描く。 */
-function buildMilkyWay(){
-  // 銀河 → 赤道(J2000) → 黄道 の回転を基底ベクトルで構成
-  const eqVec=(ra,dec)=>[cos(dec)*cos(ra),cos(dec)*sin(ra),sin(dec)];
-  const zg=eqVec(192.85948,27.12825);   // 銀河北極 (J2000)
-  let xg=eqVec(266.40500,-28.93617);    // 銀河中心方向 (l=0,b=0)
-  const d0=xg[0]*zg[0]+xg[1]*zg[1]+xg[2]*zg[2];
-  xg=xg.map((v,i)=>v-zg[i]*d0);         // 直交化（カタログ値の丸め対策）
-  const xl=Math.hypot(xg[0],xg[1],xg[2]); xg=xg.map(v=>v/xl);
-  const yg=[zg[1]*xg[2]-zg[2]*xg[1], zg[2]*xg[0]-zg[0]*xg[2], zg[0]*xg[1]-zg[1]*xg[0]];
-  const E=23.4392911;
-  const gal2ecl=(l,b)=>{
-    const cb=cos(b), q=[0,1,2].map(i=>xg[i]*cb*cos(l)+yg[i]*cb*sin(l)+zg[i]*sin(b));
-    return [q[0], q[1]*cos(E)+q[2]*sin(E), -q[1]*sin(E)+q[2]*cos(E)];
-  };
-  const N=9000, pos=new Float32Array(N*3), col=new Float32Array(N*3), sz=new Float32Array(N);
-  const R=1660;
-  let i=0;
-  while(i<N){
-    const l=rand()*360;
-    const dl=norm(l+180)-180;                       // 銀河中心からの銀経差 [-180,180)
-    const toC=Math.exp(-dl*dl/(2*70*70));           // 中心への近さ 0..1
-    if(rand()>0.30+0.70*toC) continue;              // 銀河中心側ほど高密度（非対称性）
-    const sigma=5.5+6.0*toC;                        // バルジ側は帯が太い
-    const g=(rand()+rand()+rand()+rand()-2)*1.73;
-    const b=g*sigma;                                // 銀緯方向はガウス減衰
-    const p=gal2ecl(l,b);
-    pos[i*3]=p[0]*R; pos[i*3+1]=p[2]*R; pos[i*3+2]=-p[1]*R; // 黄道直交 → (x,z,-y)
-    const br=(0.014+0.022*rand())*(0.35+0.65*toC);
-    const warm=0.35+0.65*toC;                       // 中心側はやや暖色
-    // 色の値は sRGB として決めてあるので、HDR 層（線形）へ入れる前に線形へ直す
-    const lc=srgbToLinear(br*(0.82+0.15*warm), br*0.85, br*(1.02-0.20*warm));
-    col[i*3]=lc.r; col[i*3+1]=lc.g; col[i*3+2]=lc.b;
-    sz[i]=42+rand()*55;
-    i++;
-  }
-  const g2=new THREE.BufferGeometry();
-  g2.setAttribute('position',new THREE.BufferAttribute(pos,3));
-  g2.setAttribute('color',new THREE.BufferAttribute(col,3));
-  g2.setAttribute('asize',new THREE.BufferAttribute(sz,1));
-  const mat=new THREE.ShaderMaterial({
-    uniforms:{map:{value:SPR}, uInlineTone:starUniforms.uInlineTone},   // Q0 の切り替えは星と共有
-    vertexShader:`attribute float asize;varying vec3 vC;void main(){vC=color;
-      vec4 mv=modelViewMatrix*vec4(position,1.);
-      gl_PointSize=asize*(600./-mv.z);
-      gl_Position=projectionMatrix*mv;}`,
-    // Q0（画面へ直接）では線形の色を sRGB にしてから重ねる。Q1・Q2 では mix(…, 0) で元の値のまま
-    fragmentShader:`uniform sampler2D map;uniform float uInlineTone;varying vec3 vC;void main(){
-      vec3 c=mix(vC,pow(vC,vec3(1./2.2)),uInlineTone);
-      vec4 t=texture2D(map,gl_PointCoord);gl_FragColor=vec4(c,1.)*t;}`,
-    transparent:true,blending:THREE.AdditiveBlending,depthWrite:false,vertexColors:true
-  });
-  const mw=new THREE.Points(g2,mat);
-  mw.layers.set(HDR_LAYER);             // 星と同じ HDR 層で、星より先に足し込む
-  celestialGroup.add(mw);
+/* --- 天の川（docs/rendering-upgrade.md D 節）---
+   NASA SVS「Deep Star Maps 2020」の、明るい星（Hipparcos と Tycho）を除いた天の川の背景（銀河座標の
+   正距円筒）。tools/build-milkyway.mjs で WebP にしたものを、銀河座標の格子で作った球（src/galactic.mjs）に
+   貼る。頂点に (u, v) を直接持たせるので、位置と向きは式だけで決まる（tests/galactic.test.mjs）。
+   celestialGroup の子なので歳差は星と同じ行列で乗る。HDR 層で星より先に描く（不透明・深度なし）。
+   明るさは「銀河中心のふくらみ（1° 平均）が線形 0.03、双眼鏡の空で 0.06」になる倍率（D.7。H-3） */
+const mwMaterial=new THREE.MeshBasicMaterial({side:THREE.BackSide, depthTest:false, depthWrite:false});
+mwMaterial.color.setScalar(0);
+let mwBulge=1, mwGainNow=NAKED_SKY.mwGain, mwSize=0, mwReady=Promise.resolve(false);
+const mwMesh=(()=>{
+  const s=galacticSphere(1660,180,90);                  // 2° 刻み。半径は今までの天の川と同じ
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(s.positions,3));
+  g.setAttribute('uv',new THREE.BufferAttribute(s.uvs,2));
+  g.setIndex(new THREE.BufferAttribute(s.indices,1));
+  const m=new THREE.Mesh(g,mwMaterial);
+  m.layers.set(HDR_LAYER); m.visible=false;              // 画像が届くまで出さない
+  celestialGroup.add(m);
+  return m;
+})();
+function setMilkyWayGain(g){ mwGainNow=g; mwMaterial.color.setScalar(g/mwBulge); }
+/** 画像の大きさ: 検証モードの mw=2048|4096 で固定。それ以外は、テクスチャの上限が 4096 以上で
+    指の操作が主でない端末（PC）は 4096、スマホ・タブレットは 2048（D.6） */
+const MW_SIZE_FIXED=VERIFY&&/^(2048|4096)$/.test(QS.get('mw')||'')?Number(QS.get('mw')):null;
+function pickMilkyWaySize(){
+  if(MW_SIZE_FIXED) return MW_SIZE_FIXED;
+  return renderer.capabilities.maxTextureSize>=4096&&!matchMedia('(pointer: coarse)').matches?4096:2048;
 }
-buildMilkyWay();
+async function loadMilkyWay(size){
+  try{
+    const r=await fetch('assets/sky/milkyway.json');
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const meta=await r.json(), f=meta.files[size];
+    const tex=await new THREE.TextureLoader().loadAsync(f.file);
+    tex.colorSpace=THREE.SRGBColorSpace;                // 8 ビットの sRGB。サンプルした値は線形になる
+    const old=mwMaterial.map;
+    mwMaterial.map=tex; mwMaterial.needsUpdate=true;
+    if(old) old.dispose();
+    mwBulge=meta.bulgePeak; mwSize=size;
+    setMilkyWayGain(mwGainNow);
+    mwMesh.visible=true;
+    return true;
+  }catch(e){
+    console.warn('天の川の画像を読み込めませんでした',e);  // 天の川なしで星は描ける
+    return false;
+  }
+}
+mwReady=loadMilkyWay(pickMilkyWaySize());
+
+/* 検証モードの debug=mw: D.5 の基準点に十字の印を出す（オーバーレイの層。歳差は星と同じ） */
+if(VERIFY&&QS.get('debug')==='mw'){
+  const pts=[], a=new THREE.Vector3(), e1=new THREE.Vector3(), e2=new THREE.Vector3(), up=new THREE.Vector3(0,1,0);
+  for(const p of REFERENCE_POINTS){
+    const g=equatorialToGalactic(p.ra,p.dec), v=galToThree(g.l,g.b,1640);
+    a.set(v[0],v[1],v[2]);
+    e1.crossVectors(a,up).normalize(); if(e1.lengthSq()<0.5) e1.set(1,0,0);
+    e2.crossVectors(a,e1).normalize();
+    const s=40;                                        // 1640 の半径で腕の長さ約 1.4°
+    pts.push(a.clone().addScaledVector(e1,-s),a.clone().addScaledVector(e1,s),
+             a.clone().addScaledVector(e2,-s),a.clone().addScaledVector(e2,s));
+  }
+  const marks=new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({color:0x40ff90,transparent:true,opacity:.9,depthTest:false}));
+  celestialGroup.add(marks);
+}
 
 /* --- 黄道帯のリング & サイン分割 --- */
 const SKY=1500;
@@ -1698,6 +1704,8 @@ const DEGRADE=[
   // 双眼鏡の段を 7.5 等まで（16,871 個）に減らす。明るい順に並んでいるので先頭から数えるだけ
   ()=>{ if(deepPoints&&deepPoints.visible&&!quality.deepCut){
           quality.deepCut=true; deepPoints.geometry.setDrawRange(0,deepCount75); return true; } },
+  // 天の川を 2048 px に固定する
+  ()=>{ if(mwSize===4096){ mwSize=2048; loadMilkyWay(2048); return true; } },
 ];
 const AUTO_Q=!VERIFY&&Q_FIXED===null;
 const frameMs=[];
@@ -1843,13 +1851,14 @@ if(VERIFY){
   /* ready: 星のデータを読み終え、そのあと2フレーム以上描いたら解決する */
   const frames=n=>new Promise(r=>{ const f=()=>(--n<=0?r():requestAnimationFrame(f)); requestAnimationFrame(f); });
   window.__celestia={
-    ready: starsLoaded.then(ok=>deepReady.then(()=>frames(3)).then(()=>ok)),
+    ready: starsLoaded.then(ok=>Promise.all([deepReady,mwReady]).then(()=>frames(3)).then(()=>ok)),
     probe,
     info: ()=>({ calls: renderer.info.render.calls, triangles: renderer.info.render.triangles,
                  points: renderer.info.render.points, lines: renderer.info.render.lines,
                  textures: renderer.info.memory.textures, geometries: renderer.info.memory.geometries,
                  q: quality.q, scale: quality.scale, bloom: bloomOn(), floatRT: FLOAT_RT,
                  deep: deepOn, deepCount: deepPoints?deepPoints.geometry.attributes.position.count:0,
+                 mwSize, mwGain: mwGainNow, mwBulge, mwVisible: mwMesh.visible,
                  magWhite: starUniforms.uMagWhite.value, magLimit: starUniforms.uMagLimit.value,
                  maxPointSize: starUniforms.uMaxPointSize.value, sigmaMin: starUniforms.uSigmaMin.value })
   };

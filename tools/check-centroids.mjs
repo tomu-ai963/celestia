@@ -10,8 +10,8 @@
  * - 対象: カメラの手前にあり（probe.starsFront）、窓が画面に収まる星。
  *   窓に別の星の像（その星の 3σ + 1 の範囲）がかかる場合は、重心が引っ張られるので除く（件数は出す）
  * - 窓: 像の全体（3σ + 1 実画素）を含む正方形。最低でも ±4 実画素。
- *   窓の外側の枠に平面を当てはめて背景（天の川の傾き）を引き、ピークの 10% 以上の画素で
- *   RGB の和の重みを付けて重心を取る
+ *   窓の外側の枠に平面を当てはめて背景（天の川の傾き）を引き、ピークの 25% 以上の画素で
+ *   RGB の和の重みを付けて重心を取る（ピークの 25% 以上の画素だけ）
  * - 判定: 差の最大が --tol 以下（実画素。DPR 2 では CSS 画素の 2 倍の細かさで見ている）
  * - --deep を付けると双眼鏡の段（probe.stars[1]）も含める
  * - --halo を付けると、明るい星の光芒（Q1・Q0。σh = 5σ0）の広がりも近くの星の判定に入れる
@@ -87,7 +87,7 @@ for (const f of readdirSync(DIR).filter(f => f.endsWith('.probe.json'))) {
     for (let d = -r - 1; d <= r + 1; d++) { addRing(d, -r - 1); addRing(d, r + 1); }
     for (let d = -r; d <= r; d++) { addRing(-r - 1, d); addRing(r + 1, d); }
     const A = s0 / n, Bx = sx / sxx, By = sy / syy;
-    // 背景を引いた値のうち、ピークの 10% 以上の画素だけで重心を取る（縁の雑音とディザを入れない）
+    // 背景を引いた値のうち、ピークの 25% 以上の画素だけで重心を取る（縁の雑音・ディザ・天の川の段差を入れない）
     const sub = [];
     let peak = 0;
     for (let y = cy - r; y <= cy + r; y++) for (let x = cx - r; x <= cx + r; x++) {
@@ -96,7 +96,7 @@ for (const f of readdirSync(DIR).filter(f => f.endsWith('.probe.json'))) {
     }
     let w = 0, mx = 0, my = 0;
     for (const [x, y, v] of sub) {
-      if (v < 0.1 * peak) continue;
+      if (v < 0.25 * peak) continue;
       w += v; mx += v * (x + 0.5); my += v * (y + 0.5);
     }
     if (w <= 0) { fail = true; console.log(`${name}: 星 ${s.L}:${s.i}（${s.mag} 等）の像が見つからない`); continue; }
