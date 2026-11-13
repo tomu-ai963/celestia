@@ -54,19 +54,28 @@ function flatten(p) {
   return pts;
 }
 
+/**
+ * 点（x, y の組）ごとに比べる。画面の外側1画面ぶん（[−W, 2W] × [−H, 2H]）の外にある点は
+ * 判定から除く（カメラの真横の点は座標が 10⁸ px 台になり、丸めの違いだけで 0.001 px を超えるため。
+ * とむ決定 2026-11-13）。除いた点の数は excluded に入れて毎回報告する。
+ * カメラの背後にあってもこの範囲に写る点は判定に含める（厳しい側）
+ */
 export function compareProbe(fa, fb) {
   const a = JSON.parse(readFileSync(fa, 'utf8')), b = JSON.parse(readFileSync(fb, 'utf8'));
   const pa = flatten(a), pb = flatten(b);
-  const groups = {};
-  for (const [k] of pa) groups[k.replace(/\[\d+\]$/, '')] = 0;
   if (pa.length !== pb.length) return { countMismatch: [pa.length, pb.length] };
-  let max = 0, where = null;
-  for (let i = 0; i < pa.length; i++) {
+  const W = a.W, H = a.H;
+  const inRange = (x, y) => x >= -W && x <= 2 * W && y >= -H && y <= 2 * H;
+  let max = 0, where = null, points = 0, excluded = 0;
+  for (let i = 0; i + 1 < pa.length; i += 2) {
     if (pa[i][0] !== pb[i][0]) return { keyMismatch: [pa[i][0], pb[i][0]] };
-    const d = Math.abs(pa[i][1] - pb[i][1]);
+    const [ax, ay, bx, by] = [pa[i][1], pa[i + 1][1], pb[i][1], pb[i + 1][1]];
+    if (!inRange(ax, ay) && !inRange(bx, by)) { excluded++; continue; }
+    points++;
+    const d = Math.max(Math.abs(ax - bx), Math.abs(ay - by));
     if (!(d <= max)) { max = d; where = pa[i][0]; }
   }
-  return { values: pa.length, max, where };
+  return { points, excluded, max, where };
 }
 
 let fail = false;
@@ -98,7 +107,7 @@ if (!flag('--png-only')) {
     if (!ok) fail = true;
     rows.push(`① ${f.padEnd(28)} ${r.countMismatch ? `点の数が違う ${r.countMismatch}` :
       r.keyMismatch ? `並びが違う ${r.keyMismatch}` :
-      `値 ${r.values}  最大差 ${r.max.toFixed(4)} px${r.where ? ` (${r.where})` : ''}`}  ${ok ? 'OK' : 'NG'}`);
+      `点 ${r.points}（画面外で除外 ${r.excluded}）  最大差 ${r.max.toFixed(4)} px${r.where ? ` (${r.where})` : ''}`}  ${ok ? 'OK' : 'NG'}`);
   }
 }
 console.log(rows.join('\n'));

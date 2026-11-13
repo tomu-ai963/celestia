@@ -411,6 +411,32 @@ const rand=(()=>{
    ============================================================ */
 const cv=document.getElementById('sky');
 const renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true});
+/* r152 以降は色管理が既定でオン。移行の段階（S3）では r128 と同じ旧来の扱いに固定し、
+   見た目が 1 画素も変わらないことを確かめてから切り替える（docs/rendering-upgrade.md A.4） */
+THREE.ColorManagement.enabled=false;
+renderer.outputColorSpace=THREE.LinearSRGBColorSpace;
+/* 半透明の物を描く順番を r151 までと同じにする。
+   r152 から three.js は並べる奥行きに「ジオメトリの外接球の中心」を使う。この天球では線・星・
+   天の川がすべて原点に置かれていて、以前は奥行きが等しく作った順（id 順）に描かれていた。
+   外接球の中心で並べると線ごとに順番が入れ替わり、線どうし・線と星が重なる画素の合成が変わる
+   （r187 で V1〜V3 に 34〜1,178 画素の差。位置は変わらない）。以前と同じ「物体の原点を
+   射影した z」で並べ直す。比較の手順は groupOrder → renderOrder → z（遠い順）→ id で r151 と同じ */
+{
+  const v=new THREE.Vector3(), m=new THREE.Matrix4(), zOf=new Map(); let frame=-1;
+  const z=o=>{
+    if(renderer.info.render.frame!==frame){ frame=renderer.info.render.frame; zOf.clear();
+      m.multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse); }
+    let r=zOf.get(o); if(r===undefined){ r=v.setFromMatrixPosition(o.matrixWorld).applyMatrix4(m).z; zOf.set(o,r); }
+    return r;
+  };
+  renderer.setTransparentSort((a,b)=>{
+    if(a.groupOrder!==b.groupOrder) return a.groupOrder-b.groupOrder;
+    if(a.renderOrder!==b.renderOrder) return a.renderOrder-b.renderOrder;
+    const za=z(a.object), zb=z(b.object);
+    if(za!==zb) return zb-za;
+    return a.id-b.id;
+  });
+}
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 const scene=new THREE.Scene();
 scene.fog=null;
@@ -460,7 +486,13 @@ function magBright(mag){ return Math.min(1.05, 0.50+0.62*Math.pow(10,-mag/5.5));
    position/rotation から毎フレーム作り直されないよう matrixAutoUpdate を切る */
 const celestialGroup=new THREE.Group(); scene.add(celestialGroup);
 celestialGroup.matrixAutoUpdate=false;
-function applyPrecession(T){ celestialGroup.matrix.set(...precessionMatrixThree(T)); }
+/* matrixAutoUpdate=false で matrix を直接書くので、matrixWorld の更新を明示的に頼む
+   （r185 の移行ガイド）。今は親 scene の更新に引きずられて動いているが、それに頼らない。
+   これが止まると星野だけが J2000 に取り残される（1800年で惑星と 2.79° ずれる） */
+function applyPrecession(T){
+  celestialGroup.matrix.set(...precessionMatrixThree(T));
+  celestialGroup.matrixWorldNeedsUpdate=true;
+}
 const starGroup=new THREE.Group(); celestialGroup.add(starGroup);
 function buildStars(data){
   const N=data.count, s=data.stars;
