@@ -383,6 +383,7 @@ import {
   SIGNS, GLYPH, IAU, iauConst, BODIES, lonRates, deltaLon
 } from './src/astro.mjs';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { precessionMatrixThree, eclToThree, eclVecToThree } from './src/precession.mjs';
 import { STAR_DEFAULTS, sigmaMin, bvToLinearRGB } from './src/starlight.mjs';
 import { zonedToJd, jdToZoned, zoneList, isValidZone, formatOffset } from './src/timezone.mjs';
@@ -480,15 +481,17 @@ const starUniforms={
   uGamma:{value:STAR_DEFAULTS.gamma},
   uSigmaMin:{value:sigmaMin(1)},              // 実画素。resize で pixelRatio から決め直す
   uMaxPointSize:{value:64},                   // 端末の点の大きさの上限（起動時に取る）
+  uHalo:{value:0},          // Q1・Q0 でブルームの代わりに足す光芒の強さ（Q2 では 0。E.3）
+  uInlineTone:{value:0},    // Q0（RT なし）で星のシェーダの中でトーンカーブと sRGB 変換をする（1）
 };
 const starMaterial=new THREE.ShaderMaterial({
   uniforms:starUniforms,
   vertexShader:`
     attribute float aMag;
     attribute vec3 aColor;
-    uniform float uMagWhite, uMagLimit, uPeakMax, uGamma, uSigmaMin, uMaxPointSize;
+    uniform float uMagWhite, uMagLimit, uPeakMax, uGamma, uSigmaMin, uMaxPointSize, uHalo;
     varying vec3 vColor;
-    varying float vPeak, vSigma, vSize;
+    varying float vPeak, vSigma, vSize, vHalo, vSigmaH;
     // 等級 → フラックス（表示限界のフェード込み）。starlight.mjs の starFlux
     float starFlux(float m){
       return pow(10.0, -0.4*uGamma*(m - uMagWhite)) * (1.0 - smoothstep(uMagLimit - 0.5, uMagLimit, m));
@@ -498,20 +501,35 @@ const starMaterial=new THREE.ShaderMaterial({
       return vec2(min(F, uPeakMax), uSigmaMin*sqrt(max(F/uPeakMax, 1.0)));
     }
     void main(){
-      vec2 s=starShape(starFlux(aMag));
+      float F=starFlux(aMag);
+      vec2 s=starShape(F);
       vPeak=s.x; vSigma=s.y; vColor=aColor;
-      vSize=min(6.0*s.y + 1.0, uMaxPointSize);
+      // 光芒（Q1・Q0）: 頭打ちを超えた星にだけ、総光量 uHalo·F の幅広いガウス像（σh = 5σ0）を足す
+      vSigmaH=5.0*uSigmaMin;
+      vHalo = F > uPeakMax ? uHalo*F*(uSigmaMin*uSigmaMin)/(vSigmaH*vSigmaH) : 0.0;
+      vSize=min(max(6.0*s.y + 1.0, vHalo > 0.0 ? 6.0*vSigmaH + 1.0 : 0.0), uMaxPointSize);
       gl_PointSize = vPeak > 0.0 ? vSize : 0.0;          // 点の大きさに触れるのはここだけ
       gl_Position=projectionMatrix*modelViewMatrix*vec4(position, 1.0);
     }`,
   fragmentShader:`
+    uniform float uInlineTone;
     varying vec3 vColor;
-    varying float vPeak, vSigma, vSize;
+    varying float vPeak, vSigma, vSize, vHalo, vSigmaH;
     // 中心からの距離の 2 乗 r2[実画素²] での像の値。starlight.mjs の starProfile
     float starProfile(float r2, float peak, float sigma){ return peak*exp(-r2/(2.0*sigma*sigma)); }
+    // 最終パスと同じトーンカーブ（knee 0.75）と sRGB 変換。Q0 で画面へ直接描くときだけ使う
+    vec3 toneCurve(vec3 x){
+      vec3 hi=0.75 + 0.25*(1.0 - exp(-(x - 0.75)/0.25));
+      return mix(x, hi, step(vec3(0.75), x));
+    }
+    vec3 linearToSRGB(vec3 c){
+      return mix(12.92*c, 1.055*pow(c, vec3(1.0/2.4)) - 0.055, step(vec3(0.0031308), c));
+    }
     void main(){
       vec2 d=(gl_PointCoord - 0.5)*vSize;                // 星の中心からのずれ（実画素）。ここだけ
-      gl_FragColor=vec4(vColor*starProfile(dot(d, d), vPeak, vSigma), 1.0);
+      float r2=dot(d, d);
+      vec3 c=vColor*(starProfile(r2, vPeak, vSigma) + starProfile(r2, vHalo, vSigmaH));
+      gl_FragColor=vec4(mix(c, linearToSRGB(toneCurve(c)), uInlineTone), 1.0);
     }`,
   transparent:true, depthTest:false, depthWrite:false,
   blending:THREE.CustomBlending, blendEquation:THREE.AddEquation,
@@ -644,13 +662,15 @@ function buildMilkyWay(){
   g2.setAttribute('color',new THREE.BufferAttribute(col,3));
   g2.setAttribute('asize',new THREE.BufferAttribute(sz,1));
   const mat=new THREE.ShaderMaterial({
-    uniforms:{map:{value:SPR}},
+    uniforms:{map:{value:SPR}, uInlineTone:starUniforms.uInlineTone},   // Q0 の切り替えは星と共有
     vertexShader:`attribute float asize;varying vec3 vC;void main(){vC=color;
       vec4 mv=modelViewMatrix*vec4(position,1.);
       gl_PointSize=asize*(600./-mv.z);
       gl_Position=projectionMatrix*mv;}`,
-    fragmentShader:`uniform sampler2D map;varying vec3 vC;void main(){
-      vec4 t=texture2D(map,gl_PointCoord);gl_FragColor=vec4(vC,1.)*t;}`,
+    // Q0（画面へ直接）では線形の色を sRGB にしてから重ねる。Q1・Q2 では mix(…, 0) で元の値のまま
+    fragmentShader:`uniform sampler2D map;uniform float uInlineTone;varying vec3 vC;void main(){
+      vec3 c=mix(vC,pow(vC,vec3(1./2.2)),uInlineTone);
+      vec4 t=texture2D(map,gl_PointCoord);gl_FragColor=vec4(c,1.)*t;}`,
     transparent:true,blending:THREE.AdditiveBlending,depthWrite:false,vertexColors:true
   });
   const mw=new THREE.Points(g2,mat);
@@ -1577,6 +1597,48 @@ const finalQuad=new FullScreenQuad(new THREE.ShaderMaterial({
 }));
 { const gl=renderer.getContext(); starUniforms.uMaxPointSize.value=gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1]; }
 renderer.info.autoReset=false;          // 1 フレームで render を複数回呼ぶので、数えるのはフレーム単位
+
+/* --- 品質の段階（docs/rendering-upgrade.md E.3）---
+   Q2: HDR の RT ＋ ブルーム ＋ 最終パス（既定）
+   Q1: HDR の RT ＋ 最終パス。ブルームの代わりに明るい星へ式で光芒を足す
+   Q0: RT を使わず画面へ直接。星のシェーダの中でトーンカーブと sRGB 変換をする
+   起動時に浮動小数の RT へ描けなければ Q0。URL の q=0|1|2 で固定できる（保存はしない）。
+   それ以外は、星の読み込み後に 90 フレームのフレーム間隔の中央値を測り、20 ms を超えたら
+   1 段ずつ落とす。上げ直さない（行き来して見た目が揺れるのを避ける）。
+   HDR の解像度を下げても星の位置は変わらない（RT の中の位置が同じ比率で縮むだけ） */
+const FLOAT_RT=renderer.extensions.has('EXT_color_buffer_half_float')||renderer.extensions.has('EXT_color_buffer_float');
+const Q_FIXED=/^[012]$/.test(QS.get('q')||'')?Number(QS.get('q')):null;
+const quality={ q:FLOAT_RT?(Q_FIXED??2):0, scale:1 };
+/** 検証モードの bloom=0: Q2 のままブルームだけを切る（S5 と画素単位で比べるため） */
+const BLOOM_OFF=VERIFY&&QS.get('bloom')==='0';
+let bloom=null;                          // UnrealBloomPass。Q2 になったときに初めて作る
+function bloomOn(){ return quality.q===2&&!BLOOM_OFF; }
+function applyQuality(){
+  starUniforms.uHalo.value = quality.q<2 ? 0.25 : 0;
+  starUniforms.uInlineTone.value = quality.q===0 ? 1 : 0;
+  if(bloomOn()&&!bloom){
+    // 解像度, 強さ, 半径, 閾値（B.4.4。実機で調整する。H-2）
+    bloom=new UnrealBloomPass(new THREE.Vector2(1,1),0.2,0.4,1.0);
+    bloom.highPassUniforms.smoothWidth.value=0.5;
+  }
+  resize();
+}
+/* 落とす順番（軽い順に効く手から）。適用できたら true を返す */
+const DEGRADE=[
+  ()=>{ if(quality.q>0&&quality.scale===1&&renderer.getPixelRatio()>1){ quality.scale=0.75; return true; } },
+  ()=>{ if(quality.q===2){ quality.q=1; return true; } },
+  ()=>{ if(quality.q===1){ quality.q=0; return true; } },
+];
+const AUTO_Q=!VERIFY&&Q_FIXED===null;
+const frameMs=[];
+function watchFrameTime(dt){
+  if(!AUTO_Q||!starGroup.children.length) return;
+  frameMs.push(dt*1000);
+  if(frameMs.length<90) return;
+  const med=frameMs.sort((a,b)=>a-b)[45]; frameMs.length=0;
+  if(med>20){ for(const step of DEGRADE) if(step()){ applyQuality(); break; } }
+}
+
 /** 検証モードの layers=all|sky|overlay（描く層を選ぶ）。通常は all */
 const LAYERS=VERIFY&&['sky','overlay'].includes(QS.get('layers'))?QS.get('layers'):'all';
 function draw(){
@@ -1584,8 +1646,13 @@ function draw(){
   const sky=LAYERS!=='overlay', over=LAYERS!=='sky';
   if(sky){
     camera.layers.set(HDR_LAYER);
-    renderer.setRenderTarget(hdrRT); renderer.render(scene,camera);
-    renderer.setRenderTarget(null); finalQuad.render(renderer);
+    if(quality.q>0){
+      renderer.setRenderTarget(hdrRT); renderer.render(scene,camera);
+      if(bloomOn()) bloom.render(renderer,null,hdrRT);   // needsSwap なし。hdrRT に加算で書き戻す
+      renderer.setRenderTarget(null); finalQuad.render(renderer);
+    }else{
+      renderer.setRenderTarget(null); renderer.render(scene,camera);   // Q0: 画面へ直接
+    }
   }
   if(over){
     camera.layers.set(0);
@@ -1601,15 +1668,20 @@ function resize(){
   camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
   // RT は描画バッファの整数の大きさに合わせる（CSS 幅 × pixelRatio の小数だと半画素ずれる余地がある）
   renderer.getDrawingBufferSize(_bufSize);
-  hdrRT.setSize(_bufSize.x,_bufSize.y);
-  starUniforms.uSigmaMin.value=sigmaMin(renderer.getPixelRatio());
+  const sc=quality.q>0?quality.scale:1;
+  const w=Math.max(1,Math.round(_bufSize.x*sc)), h=Math.max(1,Math.round(_bufSize.y*sc));
+  hdrRT.setSize(w,h);
+  if(bloom) bloom.setSize(w,h);
+  // σ0 は描く先の画素で決める（Q1・Q2 は RT の画素、Q0 は画面の画素）
+  starUniforms.uSigmaMin.value=sigmaMin(renderer.getPixelRatio()*sc);
 }
-addEventListener('resize',resize); resize();
+addEventListener('resize',resize); applyQuality();
 
 let t0=performance.now(), uiAcc=0;
 (function loop(){
   requestAnimationFrame(loop);
   const now=performance.now(), dt=(now-t0)/1000; t0=now;
+  watchFrameTime(dt);
 
   // 再生（1フレームあたり computeChart 3回 ≒ 59µs）
   if(playing) setTime(curJdUT + SCALES[scale].rate*SPEEDS[speedIdx]*dt, true);
@@ -1703,7 +1775,9 @@ if(VERIFY){
     probe,
     info: ()=>({ calls: renderer.info.render.calls, triangles: renderer.info.render.triangles,
                  points: renderer.info.render.points, lines: renderer.info.render.lines,
-                 textures: renderer.info.memory.textures, geometries: renderer.info.memory.geometries })
+                 textures: renderer.info.memory.textures, geometries: renderer.info.memory.geometries,
+                 q: quality.q, scale: quality.scale, bloom: bloomOn(), floatRT: FLOAT_RT,
+                 maxPointSize: starUniforms.uMaxPointSize.value, sigmaMin: starUniforms.uSigmaMin.value })
   };
 }
 

@@ -14,6 +14,7 @@
  *   RGB の和の重みを付けて重心を取る
  * - 判定: 差の最大が --tol 以下（実画素。DPR 2 では CSS 画素の 2 倍の細かさで見ている）
  * - --deep を付けると双眼鏡の段（probe.stars[1]）も含める
+ * - --halo を付けると、明るい星の光芒（Q1・Q0。σh = 5σ0）の広がりも近くの星の判定に入れる
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -25,6 +26,7 @@ const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? Number(argv[i
 const DIR = resolve(argv[0]);
 const N = opt('--n', 200), TOL = opt('--tol', 0.5);
 const DEEP = argv.includes('--deep');
+const HALO = argv.includes('--halo');   // Q1・Q0: 明るい星の光芒（σh = 5σ0）の広がりも近くの星の判定に入れる
 
 /** 星の番号 i の等級。probe には等級がないので data/ から読む（並び順は同じ） */
 const stars = JSON.parse(readFileSync(new URL('../data/stars.json', import.meta.url), 'utf8'));
@@ -53,6 +55,8 @@ for (const f of readdirSync(DIR).filter(f => f.endsWith('.probe.json'))) {
   for (const s of all) {
     const sh = starShape(starFlux(s.mag, { magWhite }), { sigma0 });
     s.sigma = sh.sigma; s.r = Math.max(4, Math.ceil(3 * sh.sigma + 1));
+    // 自分の重心の窓は芯の像で決め、ほかの星への影響の広がり（reach）は光芒まで含める
+    s.reach = HALO && sh.sigma > sigma0 ? Math.max(s.r, Math.ceil(3 * 5 * sigma0 + 1)) : s.r;
   }
   all.sort((a, b) => a.mag - b.mag);
   const grid = new Map(), key = (x, y) => `${Math.floor(x / 32)},${Math.floor(y / 32)}`;
@@ -64,7 +68,7 @@ for (const f of readdirSync(DIR).filter(f => f.endsWith('.probe.json'))) {
         for (const t of grid.get(`${gx},${gy}`) || []) if (t !== s && Math.abs(t.x - s.x) <= r && Math.abs(t.y - s.y) <= r) out.push(t);
     return out;
   };
-  const RMAX = Math.max(...all.map(s => s.r));
+  const RMAX = Math.max(...all.map(s => s.reach));
   let used = 0, skippedNeighbor = 0, skippedEdge = 0, max = 0, sum = 0, worst = null;
   const val = (x, y) => { const k = (y * png.width + x) * 4; return png.data[k] + png.data[k + 1] + png.data[k + 2]; };
   for (const s of all) {
@@ -73,7 +77,7 @@ for (const f of readdirSync(DIR).filter(f => f.endsWith('.probe.json'))) {
     const cx = Math.round(s.x - 0.5), cy = Math.round(s.y - 0.5);
     if (cx - r - 1 < 0 || cy - r - 1 < 0 || cx + r + 1 >= png.width || cy + r + 1 >= png.height) { skippedEdge++; continue; }
     // 自分の窓と、相手の像（半径 t.r）が重なる星があれば除く
-    if (near(s, r + RMAX + 1).some(t => Math.abs(t.x - s.x) <= r + t.r + 1 && Math.abs(t.y - s.y) <= r + t.r + 1)) {
+    if (near(s, r + RMAX + 1).some(t => Math.abs(t.x - s.x) <= r + t.reach + 1 && Math.abs(t.y - s.y) <= r + t.reach + 1)) {
       skippedNeighbor++; continue;
     }
     // まわりの明るさ: 窓のすぐ外の 1 画素幅の枠に平面 a + b·dx + c·dy を当てはめる
