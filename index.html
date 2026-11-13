@@ -382,7 +382,9 @@ import {
   D2R, R2D, AU, sin, cos, norm, julianDay, computeChart,
   SIGNS, GLYPH, IAU, iauConst, BODIES, lonRates, deltaLon
 } from './src/astro.mjs';
+import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { precessionMatrixThree, eclToThree, eclVecToThree } from './src/precession.mjs';
+import { STAR_DEFAULTS, sigmaMin, bvToLinearRGB } from './src/starlight.mjs';
 import { zonedToJd, jdToZoned, zoneList, isValidZone, formatOffset } from './src/timezone.mjs';
 import { searchPlace, reasonText } from './src/geocode.mjs';
 /* 占星術レイヤー（P4）。天文コアには手を入れず、その出力を入力として受け取る一方向の依存。
@@ -462,27 +464,59 @@ function starTex(){
   const ctx=c.getContext('2d');ctx.fillStyle=g;ctx.fillRect(0,0,64,64);
   return new THREE.CanvasTexture(c);
 }
-const SPR=starTex();
+const SPR=starTex();   // 手続き生成の天の川のスプライト（自前シェーダ専用なので colorSpace は付けない）
 
-/* B-V 色指数 → 色温度（Ballesteros 2012 の近似式）→ RGB（黒体放射の近似） */
-function bvToRGB(bv){
-  const T=4600*(1/(0.92*bv+1.7)+1/(0.92*bv+0.62));
-  const t=Math.min(400,Math.max(20,T/100));
-  let r,g,b;
-  if(t<=66){ r=255; g=99.4708025861*Math.log(t)-161.1195681661; }
-  else { r=329.698727446*Math.pow(t-60,-0.1332047592);
-         g=288.1221695283*Math.pow(t-60,-0.0755148492); }
-  if(t>=66) b=255;
-  else if(t<=19) b=0;
-  else b=138.5177312231*Math.log(t-10)-305.0447927307;
-  const cl=v=>Math.min(255,Math.max(0,v))/255;
-  // 実視では恒星の色は淡いので、白へ 15% 寄せて彩度を落とす
-  return [cl(r)*0.85+0.15, cl(g)*0.85+0.15, cl(b)*0.85+0.15];
-}
-/* 等級 → 点サイズ / 輝度。線形ではなく flux(10^-0.4mag) を知覚圧縮したカーブ。
-   サイズと輝度に分配し、1等星の芯の明るさと6等星の視認性を両立させる */
-function magSize(mag){ return Math.min(20, Math.max(2.1, 12.5*Math.pow(10,-mag/7))); }
-function magBright(mag){ return Math.min(1.05, 0.50+0.62*Math.pow(10,-mag/5.5)); }
+/* --- 星の明るさ・大きさ・色（docs/rendering-upgrade.md B.2〜B.4）---
+   等級はそのまま属性 aMag で渡し、Pogson の式のフラックス → ピークと幅 → ガウス像を頂点・
+   フラグメントシェーダで計算する（露出や表示限界を変えてもバッファを作り直さない）。
+   同じ式を src/starlight.mjs に持ち、npm test で値を固定している。関数名も 1 対 1 で対応させてある。
+   色は B−V → 温度 → 黒体の色度 → 線形 sRGB で、輝度を 1 にそろえる（明るさは等級だけで決まる）。
+   描く先は HDR の浮動小数のレンダーターゲット（レイヤー HDR_LAYER）。画面へはトーンカーブを通して出す */
+const HDR_LAYER=1;
+const starUniforms={
+  uMagWhite:{value:STAR_DEFAULTS.magWhite},   // 露出（最小サイズの星のピークが 1 になる等級）
+  uMagLimit:{value:STAR_DEFAULTS.magLimit},   // 表示限界（0.5 等手前からなめらかに消す）
+  uPeakMax:{value:STAR_DEFAULTS.peakMax},
+  uGamma:{value:STAR_DEFAULTS.gamma},
+  uSigmaMin:{value:sigmaMin(1)},              // 実画素。resize で pixelRatio から決め直す
+  uMaxPointSize:{value:64},                   // 端末の点の大きさの上限（起動時に取る）
+};
+const starMaterial=new THREE.ShaderMaterial({
+  uniforms:starUniforms,
+  vertexShader:`
+    attribute float aMag;
+    attribute vec3 aColor;
+    uniform float uMagWhite, uMagLimit, uPeakMax, uGamma, uSigmaMin, uMaxPointSize;
+    varying vec3 vColor;
+    varying float vPeak, vSigma, vSize;
+    // 等級 → フラックス（表示限界のフェード込み）。starlight.mjs の starFlux
+    float starFlux(float m){
+      return pow(10.0, -0.4*uGamma*(m - uMagWhite)) * (1.0 - smoothstep(uMagLimit - 0.5, uMagLimit, m));
+    }
+    // フラックス → (ピーク, 幅[実画素])。starlight.mjs の starShape
+    vec2 starShape(float F){
+      return vec2(min(F, uPeakMax), uSigmaMin*sqrt(max(F/uPeakMax, 1.0)));
+    }
+    void main(){
+      vec2 s=starShape(starFlux(aMag));
+      vPeak=s.x; vSigma=s.y; vColor=aColor;
+      vSize=min(6.0*s.y + 1.0, uMaxPointSize);
+      gl_PointSize = vPeak > 0.0 ? vSize : 0.0;          // 点の大きさに触れるのはここだけ
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(position, 1.0);
+    }`,
+  fragmentShader:`
+    varying vec3 vColor;
+    varying float vPeak, vSigma, vSize;
+    // 中心からの距離の 2 乗 r2[実画素²] での像の値。starlight.mjs の starProfile
+    float starProfile(float r2, float peak, float sigma){ return peak*exp(-r2/(2.0*sigma*sigma)); }
+    void main(){
+      vec2 d=(gl_PointCoord - 0.5)*vSize;                // 星の中心からのずれ（実画素）。ここだけ
+      gl_FragColor=vec4(vColor*starProfile(dot(d, d), vPeak, vSigma), 1.0);
+    }`,
+  transparent:true, depthTest:false, depthWrite:false,
+  blending:THREE.CustomBlending, blendEquation:THREE.AddEquation,
+  blendSrc:THREE.OneFactor, blendDst:THREE.OneFactor     // 線形の値をそのまま足す
+});
 
 /* 天球に固定されたもの（星野・星座線・IAU境界・天の川）の親グループ。
    中身は J2000 で作り、歳差はチャート生成時にこのグループの行列で適用する。
@@ -499,34 +533,29 @@ function applyPrecession(T){
   celestialGroup.matrixWorldNeedsUpdate=true;
 }
 const starGroup=new THREE.Group(); celestialGroup.add(starGroup);
-function buildStars(data){
+/** 星のデータ（黄経×1000、黄緯×1000、等級×100、色指数×100 の平らな整数列）から点群を作る。
+    位置は今までと同じ eclToThree(lon, lat, 1600)。肉眼の段と双眼鏡の段で同じ経路を通す */
+function makeStarPoints(data){
   const N=data.count, s=data.stars;
-  const pos=new Float32Array(N*3), col=new Float32Array(N*3), sz=new Float32Array(N);
+  const pos=new Float32Array(N*3), col=new Float32Array(N*3), mag=new Float32Array(N);
   const R=1600;
   for(let i=0;i<N;i++){
-    const lon=s[i*4]/1000, lat=s[i*4+1]/1000, mag=s[i*4+2]/100, ci=s[i*4+3]/100;
+    const lon=s[i*4]/1000, lat=s[i*4+1]/1000, ci=s[i*4+3]/100;
     const v=eclToThree(lon,lat,R);
     pos[i*3]=v[0]; pos[i*3+1]=v[1]; pos[i*3+2]=v[2];
-    const c=bvToRGB(ci), br=magBright(mag);
-    col[i*3]=c[0]*br; col[i*3+1]=c[1]*br; col[i*3+2]=c[2]*br;
-    sz[i]=magSize(mag);
+    const c=bvToLinearRGB(ci);
+    col[i*3]=c[0]; col[i*3+1]=c[1]; col[i*3+2]=c[2];
+    mag[i]=s[i*4+2]/100;
   }
   const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.BufferAttribute(pos,3));
-  g.setAttribute('color',new THREE.BufferAttribute(col,3));
-  g.setAttribute('asize',new THREE.BufferAttribute(sz,1));
-  const mat=new THREE.ShaderMaterial({
-    uniforms:{map:{value:SPR}},
-    vertexShader:`attribute float asize;varying vec3 vC;void main(){vC=color;
-      vec4 mv=modelViewMatrix*vec4(position,1.);
-      gl_PointSize=max(asize*(600./-mv.z),1.7);
-      gl_Position=projectionMatrix*mv;}`,
-    fragmentShader:`uniform sampler2D map;varying vec3 vC;void main(){
-      vec4 t=texture2D(map,gl_PointCoord);gl_FragColor=vec4(vC,1.)*t;}`,
-    transparent:true,blending:THREE.AdditiveBlending,depthWrite:false,vertexColors:true
-  });
-  starGroup.add(new THREE.Points(g,mat));
+  g.setAttribute('aColor',new THREE.BufferAttribute(col,3));
+  g.setAttribute('aMag',new THREE.BufferAttribute(mag,1));
+  const p=new THREE.Points(g,starMaterial);
+  p.layers.set(HDR_LAYER);
+  return p;
 }
+function buildStars(data){ starGroup.add(makeStarPoints(data)); }
 /* --- 星座線（Stellarium western skyculture, CC BY-SA） --- */
 const constGroup=new THREE.Group(); celestialGroup.add(constGroup);
 function buildConstellations(data){
@@ -604,7 +633,9 @@ function buildMilkyWay(){
     pos[i*3]=p[0]*R; pos[i*3+1]=p[2]*R; pos[i*3+2]=-p[1]*R; // 黄道直交 → (x,z,-y)
     const br=(0.014+0.022*rand())*(0.35+0.65*toC);
     const warm=0.35+0.65*toC;                       // 中心側はやや暖色
-    col[i*3]=br*(0.82+0.15*warm); col[i*3+1]=br*0.85; col[i*3+2]=br*(1.02-0.20*warm);
+    // 色の値は sRGB として決めてあるので、HDR 層（線形）へ入れる前に線形へ直す
+    const lc=srgbToLinear(br*(0.82+0.15*warm), br*0.85, br*(1.02-0.20*warm));
+    col[i*3]=lc.r; col[i*3+1]=lc.g; col[i*3+2]=lc.b;
     sz[i]=42+rand()*55;
     i++;
   }
@@ -622,7 +653,9 @@ function buildMilkyWay(){
       vec4 t=texture2D(map,gl_PointCoord);gl_FragColor=vec4(vC,1.)*t;}`,
     transparent:true,blending:THREE.AdditiveBlending,depthWrite:false,vertexColors:true
   });
-  celestialGroup.add(new THREE.Points(g2,mat));
+  const mw=new THREE.Points(g2,mat);
+  mw.layers.set(HDR_LAYER);             // 星と同じ HDR 層で、星より先に足し込む
+  celestialGroup.add(mw);
 }
 buildMilkyWay();
 
@@ -1512,9 +1545,64 @@ cv.addEventListener('click',e=>{
   if(hit.length) setFocus(hit[0].object.userData.k);
 });
 
+/* ============================================================
+   2.5 描画の流れ（docs/rendering-upgrade.md 1 節・B.4）
+   ① HDR 層（レイヤー HDR_LAYER: 天の川 → 星）を半精度浮動小数のレンダーターゲットへ足し込む
+   ② 最終パス: トーンカーブ → sRGB → ディザで画面へ（アルファは必ず 1）
+   ③ オーバーレイ（レイヤー 0: 線・ラベル・天体）を、深度だけ消して今までと同じ経路で画面へ重ねる
+   ============================================================ */
+const _bufSize=new THREE.Vector2();
+const hdrRT=new THREE.WebGLRenderTarget(1,1,{type:THREE.HalfFloatType,depthBuffer:false});
+const finalQuad=new FullScreenQuad(new THREE.ShaderMaterial({
+  uniforms:{ tHdr:{value:hdrRT.texture}, uKnee:{value:STAR_DEFAULTS.knee} },
+  vertexShader:`varying vec2 vUv;
+    void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+  fragmentShader:`
+    uniform sampler2D tHdr;
+    uniform float uKnee;
+    varying vec2 vUv;
+    // knee まで恒等、そこから指数で 1 へ。starlight.mjs の toneCurve（チャンネルごと）
+    vec3 toneCurve(vec3 x){
+      vec3 hi=uKnee + (1.0 - uKnee)*(1.0 - exp(-(x - uKnee)/(1.0 - uKnee)));
+      return mix(x, hi, step(vec3(uKnee), x));
+    }
+    // 画素の座標から 0〜1 の乱数（向きに依らない。F 節の方針 8）
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233)))*43758.5453); }
+    void main(){
+      gl_FragColor=vec4(toneCurve(max(texture2D(tHdr, vUv).rgb, 0.0)), 1.0);
+      #include <colorspace_fragment>
+      gl_FragColor.rgb += (hash(gl_FragCoord.xy) + hash(gl_FragCoord.xy + 17.0) - 1.0)/255.0;  // 三角分布のディザ
+    }`,
+  depthTest:false, depthWrite:false
+}));
+{ const gl=renderer.getContext(); starUniforms.uMaxPointSize.value=gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1]; }
+renderer.info.autoReset=false;          // 1 フレームで render を複数回呼ぶので、数えるのはフレーム単位
+/** 検証モードの layers=all|sky|overlay（描く層を選ぶ）。通常は all */
+const LAYERS=VERIFY&&['sky','overlay'].includes(QS.get('layers'))?QS.get('layers'):'all';
+function draw(){
+  renderer.info.reset();
+  const sky=LAYERS!=='overlay', over=LAYERS!=='sky';
+  if(sky){
+    camera.layers.set(HDR_LAYER);
+    renderer.setRenderTarget(hdrRT); renderer.render(scene,camera);
+    renderer.setRenderTarget(null); finalQuad.render(renderer);
+  }
+  if(over){
+    camera.layers.set(0);
+    if(sky){ renderer.autoClear=false; renderer.clearDepth(); }
+    renderer.render(scene,camera);
+    renderer.autoClear=true;
+  }
+  camera.layers.set(0);                 // Raycaster などはレイヤー 0 のまま
+}
+
 function resize(){
   renderer.setSize(innerWidth,innerHeight);
   camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  // RT は描画バッファの整数の大きさに合わせる（CSS 幅 × pixelRatio の小数だと半画素ずれる余地がある）
+  renderer.getDrawingBufferSize(_bufSize);
+  hdrRT.setSize(_bufSize.x,_bufSize.y);
+  starUniforms.uSigmaMin.value=sigmaMin(renderer.getPixelRatio());
 }
 addEventListener('resize',resize); resize();
 
@@ -1552,7 +1640,7 @@ let t0=performance.now(), uiAcc=0;
     camR*Math.sin(camPhi)*Math.sin(camTheta));
   camera.lookAt(0,0,0);
   updateMarks();
-  renderer.render(scene,camera);
+  draw();
 })();
 
 /* --- 検証モードの入口（docs/rendering-upgrade.md G.2・G.3）---
@@ -1589,6 +1677,15 @@ function probe(){
   return {
     W, H,
     stars: starGroup.children.map(pts),
+    // カメラの手前（NDC の z が −1〜1）にある星の番号。重心の検査（G.3 ③）で描かれない星を除くため
+    starsFront: starGroup.children.map(o=>{
+      const a=o.geometry.attributes.position, out=[];
+      for(let i=0;i<a.count;i++){
+        v.fromBufferAttribute(a,i).applyMatrix4(o.matrixWorld).project(camera);
+        if(v.z>=-1&&v.z<=1) out.push(i);
+      }
+      return out;
+    }),
     constellations: constGroup.children.map(pts),
     bodies: Object.fromEntries(BODIES.map(b=>{
       v.setFromMatrixPosition(marks[b.k].sp.matrixWorld).project(camera); return [b.k,px()]; })),

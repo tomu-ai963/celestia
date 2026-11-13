@@ -107,6 +107,11 @@ async function main() {
         });
         const q = `verify=1&seed=1&${CONDITIONS[condKey]}${o.extra ? '&' + o.extra : ''}`;
         await page.goto(`${base}${o.page || 'index.html'}?${q}`);
+        try {
+          await page.waitForFunction(() => window.__celestia, null, { timeout: 15000 });
+        } catch {
+          throw new Error(`${condKey}/${sizeKey}: ページが起動しない\n${[...entry.errors, ...entry.console].join('\n')}`);
+        }
         const ok = await page.evaluate(() => window.__celestia.ready);
         if (!ok) throw new Error(`${condKey}/${sizeKey}: 星のデータを読めなかった`);
         if (o.wait) await page.evaluate(ms => new Promise(r => setTimeout(r, ms)), Number(o.wait));
