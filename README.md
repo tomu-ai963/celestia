@@ -372,7 +372,7 @@ setInterpreter(async keys => await fetch('/my/texts.json').then(r => r.json()));
 - [ ] 解釈テキストの実データ接続（別プロダクト側の作業）
 
 ### 運用
-- [ ] GitHub Pages で公開
+- [ ] Cloudflare Workers（`celestia.tomu-ai.dev`）で公開し、GitHub Pages を停止（下記「公開」参照）
 - [ ] OGP画像を天球のスクリーンショットから自動生成
 - [x] three.js を CDN からローカルバンドルへ（`vendor/three/` に r187 の配布物をそのまま置き、importmap で読む）
 
@@ -463,6 +463,22 @@ npm run serve                 # npx serve（http://localhost:8000）
 # または
 python -m http.server 8000    # http://localhost:8000
 ```
+
+### 公開（Cloudflare Workers）
+
+`https://celestia.tomu-ai.dev` に、静的アセットだけの Worker として公開する。
+
+```sh
+npx wrangler dev      # 本番と同じ構成（CSP 付き）でローカル確認（http://localhost:8787）
+npx wrangler deploy   # 公開
+```
+
+- `wrangler.jsonc` の `build.command` で `tools/build-site.mjs` が先に走り、公開するファイルだけを `dist/` に集める。
+  `node_modules/`・`tests/`・`tools/`・`docs/` などは配信しない。公開するものを増やすときは `tools/build-site.mjs` の一覧に足す
+- CSP は `_headers` がテンプレート。index.html のインラインスクリプト（importmap・file:// 案内・本体）は
+  ビルドのたびに SHA-256 を計算して `dist/_headers` の script-src に入れるので、index.html を編集してもハッシュの手直しは要らない
+  （`tests/site.test.mjs` で計算方法を確認している）
+- 入口は `celestia.tomu-ai.dev` のカスタムドメインだけ（`workers.dev` と Preview URL は無効）
 
 ## 既知の制約
 

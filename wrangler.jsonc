@@ -1,0 +1,17 @@
+// CELESTIA: 静的ファイルを配信するだけの Worker（プログラムは持たない）。
+// deploy は `npx wrangler deploy`（とむの確認を取ってから）。account_id は書かない（wrangler login のアカウントを使う）
+{
+  "name": "celestia",
+  "compatibility_date": "2026-11-01",
+  // 入口はカスタムドメイン 1 つに絞る（書かないと deploy のたびに workers.dev / Preview URL が既定で有効になる）
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "celestia.tomu-ai.dev", "custom_domain": true }],
+  // 公開するファイルは tools/build-site.mjs の一覧で決める（node_modules/・tests/・tools/ などを配信しない）。
+  // index.html のインラインスクリプトの CSP ハッシュもここで計算して dist/_headers に書く。
+  // wrangler dev / deploy の前に毎回走る
+  "build": { "command": "node tools/build-site.mjs" },
+  "assets": {
+    "directory": "./dist/"
+  }
+}
