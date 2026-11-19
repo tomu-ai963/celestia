@@ -1,0 +1,11 @@
+# すべてのページに付けるセキュリティヘッダー（Cloudflare Workers の静的アセット配信が読む）
+# これはテンプレート。script-src の差し込み口（二重波かっこの INLINE_SCRIPT_HASHES）は tools/build-site.mjs が
+# index.html のインラインスクリプトのハッシュに置き換えて dist/_headers に書く（このファイルを直接配信はしない）。
+# スクリプトは自前のもの（src/・vendor/three/）とハッシュで許したインラインだけ。
+# style は index.html の <style> と、描画時に innerHTML で付ける style 属性があるので 'unsafe-inline' を許す。
+# 外から読むのは Google Fonts（CSS と字形ファイル）、通信は出生地検索の Open-Meteo Geocoding API だけ。
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' {{INLINE_SCRIPT_HASHES}}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://geocoding-api.open-meteo.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
