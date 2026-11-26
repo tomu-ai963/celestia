@@ -1,5 +1,5 @@
 // CELESTIA: 静的ファイルを配信するだけの Worker（プログラムは持たない）。
-// deploy は `npx wrangler deploy`（とむの確認を取ってから）。account_id は書かない（wrangler login のアカウントを使う）
+// deploy は `npx wrangler deploy`。account_id は書かない（wrangler login のアカウントを使う）
 {
   "name": "celestia",
   "compatibility_date": "2026-11-01",
